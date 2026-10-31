@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 import { ConversationList } from "@/components/sidebar/conversation-list";
@@ -19,6 +20,14 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
           <nav className="flex-1 overflow-y-auto p-2">
             <ConversationList />
           </nav>
+          <div className="border-t border-gray-800 p-2">
+            <Link
+              href="/bookings"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+            >
+              🎫 My Bookings
+            </Link>
+          </div>
           <div className="border-t border-gray-800">
             <UserMenu session={session} />
           </div>

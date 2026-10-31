@@ -6,8 +6,9 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { readFileSync } from "fs";
 import { join } from "path";
 import { auth } from "@/lib/auth";
-import { saveMessage, getConversation, updateConversationTitle } from "@/lib/db/queries";
+import { saveMessage, getConversation, updateConversationTitle, saveBooking } from "@/lib/db/queries";
 import { createLoggingHook } from "@/lib/ai-hooks";
+import { sendBookingConfirmation } from "@/lib/email";
 
 function buildSystemPrompt(): string {
   const skillFiles = ["flight-search", "booking", "seat-management"];
@@ -66,6 +67,34 @@ export async function POST(req: Request) {
       await mcpClient.close();
       if (session?.user?.id && conversationId) {
         await saveMessage(conversationId, "assistant", responseMessage);
+
+        // Persist any flight bookings made in this exchange
+        for (const part of responseMessage.parts) {
+          if (part.type === "dynamic-tool" && (part as { toolName?: string }).toolName === "book_flight") {
+            const p = part as { toolName: string; state: string; output?: { content?: Array<{ text: string }> } };
+            if (p.state === "output-available" && p.output?.content?.[0]?.text) {
+              const b = JSON.parse(p.output.content[0].text);
+              await saveBooking({
+                userId: session.user.id,
+                bookingRef: b.bookingId,
+                flightId: b.flightId,
+                passengerName: b.passengerName,
+                seat: b.seat,
+              });
+
+              // Send confirmation email if we have the user's email
+              if (session.user.email) {
+                await sendBookingConfirmation({
+                  to: session.user.email,
+                  passengerName: b.passengerName,
+                  bookingRef: b.bookingId,
+                  flightId: b.flightId,
+                  seat: b.seat,
+                }).catch(() => {}); // non-critical — don't fail the response if email fails
+              }
+            }
+          }
+        }
 
         // Generate a title after the very first exchange (messages has only 1 entry = first user msg)
         if (messages.length === 1) {
