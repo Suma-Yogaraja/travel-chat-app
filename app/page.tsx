@@ -1,5 +1,4 @@
 import Link from "next/link";
-
 export const dynamic = "force-dynamic";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -7,37 +6,56 @@ import { SignInButton } from "@/components/auth/sign-in-button";
 
 export default async function LandingPage() {
   const session = await auth();
-
-  // Already logged in — go straight to chat
   if (session?.user) redirect("/chat");
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-8 px-4">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight">✈️ TravelChat</h1>
-        <p className="mt-3 text-gray-400 max-w-sm">
-          Search flights, book tickets, and manage your seats — all through conversation.
+    <div className="flex h-full flex-col bg-[#0a0a0a]">
+
+      {/* Nav */}
+      <nav className="flex items-center justify-between px-8 py-5">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">✈️</span>
+          <span className="text-sm font-semibold text-white">TravelChat</span>
+        </div>
+        <SignInButton variant="nav" />
+      </nav>
+
+      {/* Hero */}
+      <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+
+        {/* Eyebrow */}
+        <p className="mb-5 text-xs font-medium tracking-widest text-blue-400 uppercase">
+          AI-powered travel assistant
         </p>
-      </div>
 
-      <div className="flex flex-col items-center gap-3 w-full max-w-xs">
-        <SignInButton />
+        {/* Title */}
+        <h1 className="text-5xl sm:text-6xl font-bold text-white leading-[1.08] tracking-tight max-w-2xl">
+          Book flights by just{" "}
+          <span className="text-blue-400">talking</span>
+        </h1>
 
-        <div className="flex items-center gap-3 w-full">
-          <div className="flex-1 h-px bg-gray-800" />
-          <span className="text-xs text-gray-600">or</span>
-          <div className="flex-1 h-px bg-gray-800" />
+        <p className="mt-5 max-w-sm text-[15px] text-[#888] leading-relaxed">
+          Search, compare, and book flights through natural conversation. No forms, no menus — just chat.
+        </p>
+
+        {/* Actions */}
+        <div className="mt-10 flex flex-col items-center gap-3 w-72">
+          <SignInButton variant="primary" />
+          <Link
+            href="/chat/guest"
+            className="w-full rounded-xl border border-[#222] px-4 py-2.5 text-sm text-[#888] hover:border-[#333] hover:text-white transition-colors text-center"
+          >
+            Continue without account
+          </Link>
         </div>
 
-        <Link
-          href="/chat/guest"
-          className="w-full rounded-lg border border-gray-700 px-4 py-2 text-center text-sm text-gray-400 hover:border-gray-500 hover:text-gray-200 transition-colors"
-        >
-          Continue as guest
-        </Link>
-        <p className="text-xs text-gray-600 text-center">
-          Guest chats are not saved. Sign in to keep your history.
-        </p>
+        {/* Features */}
+        <div className="mt-20 flex items-center gap-8 text-sm text-[#555]">
+          <span className="flex items-center gap-1.5"><span className="text-blue-500">✓</span> Flight search</span>
+          <span className="flex items-center gap-1.5"><span className="text-blue-500">✓</span> Seat selection</span>
+          <span className="flex items-center gap-1.5"><span className="text-blue-500">✓</span> Instant booking</span>
+          <span className="flex items-center gap-1.5"><span className="text-blue-500">✓</span> Email confirmation</span>
+        </div>
       </div>
     </div>
   );

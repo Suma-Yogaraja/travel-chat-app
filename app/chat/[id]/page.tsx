@@ -3,15 +3,19 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
-import { useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ToolCallLog } from "@/components/chat/tool-call-log";
 
 export default function ConversationPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const didSendInitial = useRef(false);
+  const [title, setTitle] = useState("New conversation");
 
   // In AI SDK v7, configure the API endpoint via DefaultChatTransport
   const { messages, sendMessage, status, setMessages } = useChat({
@@ -22,19 +26,32 @@ export default function ConversationPage() {
     }),
   });
 
-  // Load existing messages from DB when the conversation ID changes
+  // Load existing messages and conversation title from DB
   useEffect(() => {
     fetch(`/api/conversations/${params.id}`)
-      .then(r => r.ok ? r.json() : [])
-      .then((dbRows: Array<{ id: string; role: string; content: unknown }>) => {
-        if (dbRows.length > 0) {
-          // DB stores the full UIMessage as JSONB in `content` — cast it back
-          const uiMessages: UIMessage[] = dbRows.map(row => row.content as UIMessage);
+      .then(r => r.ok ? r.json() : { messages: [], title: "" })
+      .then((data: { messages?: Array<{ id: string; role: string; content: unknown }>; title?: string } | Array<{ id: string; role: string; content: unknown }>) => {
+        // Handle both array (old) and object (new) response shapes
+        const rows = Array.isArray(data) ? data : (data.messages ?? []);
+        const convTitle = Array.isArray(data) ? "" : (data.title ?? "");
+        if (convTitle) setTitle(convTitle);
+        if (rows.length > 0) {
+          const uiMessages: UIMessage[] = rows.map((row: { content: unknown }) => row.content as UIMessage);
           setMessages(uiMessages);
         }
       })
       .catch(() => {});
   }, [params.id, setMessages]);
+
+  // Auto-send the initial message if redirected from new-chat page
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q && !didSendInitial.current) {
+      didSendInitial.current = true;
+      sendMessage({ text: q });
+      router.replace(`/chat/${params.id}`); // remove ?q= from URL
+    }
+  }, [searchParams, sendMessage, router, params.id]);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -47,8 +64,12 @@ export default function ConversationPage() {
     <div className="flex h-full">
       {/* Chat area */}
       <div className="flex flex-1 flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-3 border-b border-gray-800 px-4 py-3">
+          <span className="text-sm font-medium text-gray-200 truncate">{title}</span>
+        </div>
         <div className="flex-1 overflow-y-auto px-4">
-          <ChatMessages messages={messages} />
+          <ChatMessages messages={messages} onSendMessage={text => sendMessage({ text })} />
           <div ref={bottomRef} />
         </div>
         <ChatInput

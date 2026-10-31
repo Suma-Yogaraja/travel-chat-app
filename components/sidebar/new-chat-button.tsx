@@ -1,32 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 
 export function NewChatButton() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-
-  async function handleNewChat() {
-    setLoading(true);
-    const res = await fetch("/api/conversations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "New conversation" }),
-    });
-    const conv = await res.json();
-    router.push(`/chat/${conv.id}`);
-    setLoading(false);
-  }
 
   return (
     <button
-      onClick={handleNewChat}
-      disabled={loading}
-      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 transition-colors disabled:opacity-50"
+      onClick={() => router.push("/chat")}
+      className="flex w-full items-center gap-2 rounded-lg border border-[#222] bg-[#111] px-3 py-2 text-sm text-[#999] hover:border-[#2a2a2a] hover:bg-[#161616] hover:text-white transition-colors"
     >
-      <span className="text-lg leading-none">+</span>
-      {loading ? "Creating..." : "New chat"}
+      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+      </svg>
+      New chat
     </button>
   );
 }

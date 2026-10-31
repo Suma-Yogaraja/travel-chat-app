@@ -41,7 +41,7 @@ export default function GuestChatPage() {
         {/* Chat area */}
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-4">
-            <ChatMessages messages={messages} />
+            <ChatMessages messages={messages} onSendMessage={text => sendMessage({ text })} />
             <div ref={bottomRef} />
           </div>
           <ChatInput

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getMessages } from "@/lib/db/queries";
+import { getMessages, getConversation } from "@/lib/db/queries";
 
 export async function GET(
   _req: Request,
@@ -12,10 +12,12 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const msgs = await getMessages(id, session.user.id);
-    return NextResponse.json(msgs);
+    const [conv, msgs] = await Promise.all([
+      getConversation(id, session.user.id),
+      getMessages(id, session.user.id),
+    ]);
+    return NextResponse.json({ title: conv?.title ?? "", messages: msgs });
   } catch {
-    // getMessages throws "Unauthorized" if the conversation doesn't belong to this user
     return new Response("Unauthorized", { status: 403 });
   }
 }

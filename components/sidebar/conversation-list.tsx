@@ -19,28 +19,31 @@ export function ConversationList() {
       .then(r => r.json())
       .then(setConvs)
       .catch(() => {});
-  }, [pathname]); // refresh list when navigation changes
+  }, [pathname]);
 
   if (convs.length === 0) {
-    return <p className="px-3 py-2 text-xs text-gray-500">No conversations yet</p>;
+    return <p className="px-3 py-2 text-xs text-[#444]">No conversations yet</p>;
   }
 
   return (
     <ul className="space-y-0.5">
-      {convs.map(conv => (
-        <li key={conv.id}>
-          <Link
-            href={`/chat/${conv.id}`}
-            className={`block truncate rounded-lg px-3 py-2 text-sm transition-colors ${
-              pathname === `/chat/${conv.id}`
-                ? "bg-gray-700 text-white"
-                : "text-gray-400 hover:bg-gray-700 hover:text-white"
-            }`}
-          >
-            {conv.title}
-          </Link>
-        </li>
-      ))}
+      {convs.map(conv => {
+        const isActive = pathname === `/chat/${conv.id}`;
+        return (
+          <li key={conv.id}>
+            <Link
+              href={`/chat/${conv.id}`}
+              className={`flex items-center rounded-lg px-3 py-2 text-sm transition-colors ${
+                isActive
+                  ? "bg-[#1a1a1a] text-white"
+                  : "text-[#666] hover:bg-[#141414] hover:text-[#aaa]"
+              }`}
+            >
+              <span className="truncate">{conv.title}</span>
+            </Link>
+          </li>
+        );
+      })}
     </ul>
   );
 }

@@ -34,13 +34,8 @@ server.tool(
   },
   async ({ flightId }) => {
     const seats = provider.getFlightSeats(flightId);
-    const available = seats.filter(s => s.available).map(s => `${s.seatNumber}(${s.type})`);
-    const taken     = seats.filter(s => !s.available).map(s => s.seatNumber);
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({ flightId, available, taken }, null, 2),
-      }],
+      content: [{ type: "text", text: JSON.stringify(seats, null, 2) }],
     };
   }
 );
