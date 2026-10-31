@@ -1,4 +1,4 @@
-import { streamText, convertToModelMessages, stepCountIs } from "ai";
+import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
 import type { UIMessage } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createMCPClient } from "@ai-sdk/mcp";
@@ -6,7 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { readFileSync } from "fs";
 import { join } from "path";
 import { auth } from "@/lib/auth";
-import { saveMessage, getConversation } from "@/lib/db/queries";
+import { saveMessage, getConversation, updateConversationTitle } from "@/lib/db/queries";
 import { createLoggingHook } from "@/lib/ai-hooks";
 
 function buildSystemPrompt(): string {
@@ -65,8 +65,19 @@ export async function POST(req: Request) {
     onFinish: async ({ responseMessage }) => {
       await mcpClient.close();
       if (session?.user?.id && conversationId) {
-        // Save full UIMessage (includes text + tool call parts) as JSONB
         await saveMessage(conversationId, "assistant", responseMessage);
+
+        // Generate a title after the very first exchange (messages has only 1 entry = first user msg)
+        if (messages.length === 1) {
+          const userText = messages[0].parts
+            ?.find((p): p is { type: "text"; text: string } => p.type === "text")
+            ?.text ?? "";
+          const { text: title } = await generateText({
+            model: anthropic("claude-haiku-4-5-20251001"),
+            prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${userText}". Respond with only the title, no quotes, no punctuation at the end.`,
+          });
+          await updateConversationTitle(conversationId, title.trim());
+        }
       }
     },
   });

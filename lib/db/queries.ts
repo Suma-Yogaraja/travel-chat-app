@@ -30,6 +30,13 @@ export async function getConversation(id: string, userId: string) {
   return conv ?? null;
 }
 
+export async function updateConversationTitle(id: string, title: string) {
+  await db
+    .update(conversations)
+    .set({ title, updatedAt: new Date() })
+    .where(eq(conversations.id, id));
+}
+
 // --- Messages ---
 
 export async function getMessages(conversationId: string, userId: string) {
