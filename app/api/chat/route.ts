@@ -55,11 +55,11 @@ export async function POST(req: Request) {
         await saveMessage(conversationId, "assistant", responseMessage);
 
         // Persist any flight bookings made in this exchange.
-        // Inline tools return plain objects (not MCP's {content:[{text:...}]} shape).
+        // Inline tools: result lives at part.toolInvocation.result (plain JS object).
         for (const part of responseMessage.parts) {
-          const p = part as unknown as { toolName?: string; state?: string; result?: unknown };
-          if (p.toolName === "book_flight" && p.state === "result") {
-              const b = p.result as { bookingId: string; flightId: string; passengerName: string; seat: string };
+          const p = part as unknown as { type: string; toolInvocation?: { toolName?: string; state?: string; result?: unknown } };
+          if (p.type === "tool-invocation" && p.toolInvocation?.toolName === "book_flight" && p.toolInvocation?.state === "result") {
+              const b = p.toolInvocation.result as { bookingId: string; flightId: string; passengerName: string; seat: string };
               await saveBooking({
                 userId: session.user.id,
                 bookingRef: b.bookingId,

@@ -18,6 +18,10 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   }, [input]);
 
+  useEffect(() => {
+    if (!disabled) textareaRef.current?.focus();
+  }, [disabled]);
+
   function handleSubmit() {
     const trimmed = input.trim();
     if (!trimmed || disabled) return;
