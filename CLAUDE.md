@@ -17,6 +17,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - MCP client is created and closed per-request (serverless-safe). Do not share a single instance across requests.
 - Hooks (`onStepFinish`, `onFinish`) go through utilities in `lib/ai-hooks.ts` — keep the route handler clean.
 - Switch mock ↔ real flight API via `FLIGHT_PROVIDER` env var only. Zero code changes needed.
+- Keep mock providers aligned with real data constraints — avoid strict validation (e.g. exact date filters) that diverges from production behavior and causes silent failures.
 
 ## Key files
 - `mcp-server/index.ts` — all 5 MCP tools
