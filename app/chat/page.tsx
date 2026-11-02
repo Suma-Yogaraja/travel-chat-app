@@ -1,13 +1,14 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect } from "react";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatInput } from "@/components/chat/chat-input";
 
 // Blank new-chat page — conversation is created only when the user sends their first message
 export default function NewChatPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [pending, setPending] = useState(false);
 
   async function handleSend(text: string) {
@@ -20,6 +21,13 @@ export default function NewChatPage() {
     const conv = await res.json();
     router.push(`/chat/${conv.id}?q=${encodeURIComponent(text)}`);
   }
+
+  // Auto-send if redirected from bookings page with a pre-filled query
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q) handleSend(q);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">

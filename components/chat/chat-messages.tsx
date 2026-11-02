@@ -11,7 +11,12 @@ interface MessageBubbleProps {
 function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const textParts = message.parts.filter(p => p.type === "text");
-  const toolParts = message.parts.filter(p => p.type === "dynamic-tool");
+  // Inline typed tools have type "tool-<name>"; MCP/dynamic tools have type "dynamic-tool".
+  // Stored messages normalize typed parts back to "dynamic-tool" across persistence boundaries.
+  const toolParts = message.parts.filter(p => {
+    const t = (p as { type: string }).type;
+    return t === "dynamic-tool" || (t.startsWith("tool-") && t !== "tool-result");
+  });
 
   if (isUser) {
     return (
@@ -33,20 +38,31 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
         {toolParts.map((part, i) => {
           const tool = part as {
             type: string;
-            toolName: string;
+            toolName?: string;
             state: string;
             input?: { flightId?: string };
-            output?: { content?: Array<{ text: string }> };
+            output?: unknown;
           };
-          if (tool.toolName === "get_flight_seats" && tool.state === "output-available") {
-            const rawText = tool.output?.content?.[0]?.text ?? "[]";
-            const seats = Array.isArray(JSON.parse(rawText)) ? JSON.parse(rawText) : [];
+          // Inline tools: type is "tool-get_flight_seats", no toolName field.
+          // Dynamic/stored tools: type is "dynamic-tool", toolName field present.
+          const toolName = tool.toolName ?? (tool.type.startsWith("tool-") ? tool.type.slice(5) : "");
+
+          if (toolName === "get_flight_seats" && tool.state === "output-available") {
+            // Inline tools return the value directly (array of seats).
+            // MCP tools wrapped it in { content: [{ text: "..." }] }.
+            let seats: unknown[] = [];
+            if (Array.isArray(tool.output)) {
+              seats = tool.output;
+            } else if (tool.output && typeof tool.output === "object" && "content" in tool.output) {
+              const mcp = tool.output as { content: Array<{ text: string }> };
+              try { seats = JSON.parse(mcp.content?.[0]?.text ?? "[]"); } catch { seats = []; }
+            }
             return (
               <SeatMap
                 key={i}
-                seats={seats}
+                seats={seats as Parameters<typeof SeatMap>[0]["seats"]}
                 flightId={tool.input?.flightId ?? ""}
-                onSelectSeat={seat => onSendMessage?.(`I'd like to book seat ${seat}`)}
+                onSelectSeat={seat => onSendMessage?.(`I'd like to select seat ${seat}`)}
               />
             );
           }

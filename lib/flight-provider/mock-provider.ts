@@ -44,7 +44,7 @@ function buildSeatMap(flightId: string): Seat[] {
 
 // In-memory bookings store — resets on server restart (mock only)
 const bookings = new Map<string, Booking>();
-let bookingCounter = 1000;
+let bookingCounter = 0;
 
 export class MockProvider implements FlightProvider {
   searchFlights({ origin, destination, date }: { origin: string; destination: string; date: string }): Flight[] {
@@ -71,7 +71,9 @@ export class MockProvider implements FlightProvider {
     if (!seat.available) throw new Error(`Seat ${seatNumber} is not available`);
 
     // Mark seat as taken by adding to the booking store
-    const bookingId = `BK-${++bookingCounter}`;
+    // Include a random suffix so IDs are unique across Vercel cold starts
+    // (the in-memory counter resets on every new function instance)
+    const bookingId = `BK-${Date.now()}-${(++bookingCounter).toString().padStart(3, "0")}`;
     const booking: Booking = {
       bookingId,
       flightId,

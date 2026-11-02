@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getBookings } from "@/lib/db/queries";
+import { BookingActions } from "@/components/bookings/booking-actions";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -34,27 +35,41 @@ export default async function BookingsPage() {
           </div>
         ) : (
           <ul className="space-y-3">
-            {bookings.map(b => (
-              <li
-                key={b.id}
-                className="rounded-xl bg-gray-900 border border-gray-800 px-5 py-4"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-white">{b.passengerName}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Flight {b.flightId} · Seat {b.seat}
-                    </p>
+            {bookings.map(b => {
+              const cancelled = b.status === "cancelled";
+              return (
+                <li
+                  key={b.id}
+                  className={`rounded-xl border px-5 py-4 transition-colors ${
+                    cancelled
+                      ? "bg-gray-900/40 border-gray-800/50 opacity-60"
+                      : "bg-gray-900 border-gray-800"
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className={`text-sm font-semibold ${cancelled ? "text-gray-400" : "text-white"}`}>
+                        {b.passengerName}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Flight {b.flightId} · Seat {b.seat}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs ${
+                        cancelled
+                          ? "bg-gray-800 text-gray-500"
+                          : "bg-green-900/50 text-green-400"
+                      }`}>
+                        {b.status}
+                      </span>
+                      <p className="text-xs text-gray-600 mt-1 font-mono">{b.bookingRef}</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="inline-block rounded-full bg-green-900/50 px-2.5 py-0.5 text-xs text-green-400">
-                      {b.status}
-                    </span>
-                    <p className="text-xs text-gray-600 mt-1 font-mono">{b.bookingRef}</p>
-                  </div>
-                </div>
-              </li>
-            ))}
+                  <BookingActions bookingRef={b.bookingRef} status={b.status} />
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

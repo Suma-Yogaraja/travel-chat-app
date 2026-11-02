@@ -7,7 +7,7 @@ import { auth } from "@/lib/auth";
 import { saveMessage, getConversation, updateConversationTitle, saveBooking } from "@/lib/db/queries";
 import { createLoggingHook } from "@/lib/ai-hooks";
 import { sendBookingConfirmation } from "@/lib/email";
-import { travelTools } from "@/lib/tools";
+import { createTravelTools } from "@/lib/tools";
 
 function buildSystemPrompt(): string {
   const skillFiles = ["flight-search", "booking", "seat-management"];
@@ -40,45 +40,65 @@ export async function POST(req: Request) {
   // AI SDK v7 separates the UI representation from the model representation.
   const modelMessages = await convertToModelMessages(messages);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function handleStep(step: any) {
+    // Log tool calls (existing behaviour)
+    createLoggingHook()(step);
+
+    // Detect book_flight results and persist immediately per-step.
+    // onStepFinish is confirmed to fire (we see [TOOL CALLED] logs); onFinish is less reliable under streaming.
+    if (!session?.user?.id || !conversationId) return;
+
+    // toolResults already includes staticToolResults — don't spread both or we get duplicates
+    const results = step.toolResults ?? [];
+    console.log("[step] toolResults count:", results.length);
+
+    for (const tr of results) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const typed = tr as any;
+      const toolName: string = typed.toolName ?? "";
+      const output: unknown = typed.output ?? typed.result;
+      console.log("[step] tool:", toolName, "output:", JSON.stringify(output));
+
+      if (toolName !== "book_flight") continue;
+      const b = output as { bookingId: string; flightId: string; passengerName: string; seat: string };
+      try {
+        await saveBooking({
+          userId: session.user.id,
+          bookingRef: b.bookingId,
+          flightId: b.flightId,
+          passengerName: b.passengerName,
+          seat: b.seat,
+        });
+        console.log("[step] booking saved:", b.bookingId);
+      } catch (err) {
+        console.error("[step] saveBooking error:", err);
+      }
+      if (session.user.email) {
+        await sendBookingConfirmation({
+          to: session.user.email,
+          passengerName: b.passengerName,
+          bookingRef: b.bookingId,
+          flightId: b.flightId,
+          seat: b.seat,
+        }).catch(err => console.error("[step] email error:", err));
+      }
+    }
+  }
+
   const result = streamText({
     model: anthropic("claude-sonnet-4-6"),
     system: buildSystemPrompt(),
     messages: modelMessages,
-    tools: travelTools,
+    tools: createTravelTools(session?.user?.id, session?.user?.email ?? undefined),
     stopWhen: stepCountIs(5),
-    onStepFinish: createLoggingHook(),
+    onStepFinish: handleStep,
   });
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ responseMessage }) => {
       if (session?.user?.id && conversationId) {
         await saveMessage(conversationId, "assistant", responseMessage);
-
-        // Persist any flight bookings made in this exchange.
-        // Inline tools: result lives at part.toolInvocation.result (plain JS object).
-        for (const part of responseMessage.parts) {
-          const p = part as unknown as { type: string; toolInvocation?: { toolName?: string; state?: string; result?: unknown } };
-          if (p.type === "tool-invocation" && p.toolInvocation?.toolName === "book_flight" && p.toolInvocation?.state === "result") {
-              const b = p.toolInvocation.result as { bookingId: string; flightId: string; passengerName: string; seat: string };
-              await saveBooking({
-                userId: session.user.id,
-                bookingRef: b.bookingId,
-                flightId: b.flightId,
-                passengerName: b.passengerName,
-                seat: b.seat,
-              });
-
-              if (session.user.email) {
-                await sendBookingConfirmation({
-                  to: session.user.email,
-                  passengerName: b.passengerName,
-                  bookingRef: b.bookingId,
-                  flightId: b.flightId,
-                  seat: b.seat,
-                }).catch(() => {});
-              }
-          }
-        }
 
         if (messages.length === 1) {
           const userText = messages[0].parts

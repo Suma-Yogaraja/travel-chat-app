@@ -19,7 +19,11 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   }, [input]);
 
   useEffect(() => {
-    if (!disabled) textareaRef.current?.focus();
+    if (!disabled) {
+      // Defer focus until after React finishes flushing DOM updates
+      const raf = requestAnimationFrame(() => textareaRef.current?.focus());
+      return () => cancelAnimationFrame(raf);
+    }
   }, [disabled]);
 
   function handleSubmit() {

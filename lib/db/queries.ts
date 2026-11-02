@@ -96,3 +96,27 @@ export async function getBookings(userId: string) {
     .where(eq(bookings.userId, userId))
     .orderBy(asc(bookings.createdAt));
 }
+
+export async function cancelBooking(bookingRef: string, userId: string) {
+  await db
+    .update(bookings)
+    .set({ status: "cancelled" })
+    .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)));
+}
+
+export async function getBookingByRef(bookingRef: string, userId: string) {
+  const [row] = await db
+    .select()
+    .from(bookings)
+    .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)));
+  return row ?? null;
+}
+
+export async function updateBookingSeat(bookingRef: string, userId: string, newSeat: string) {
+  const [row] = await db
+    .update(bookings)
+    .set({ seat: newSeat })
+    .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)))
+    .returning();
+  return row ?? null;
+}
