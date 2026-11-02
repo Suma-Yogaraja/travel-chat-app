@@ -1,14 +1,13 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
 import type { UIMessage } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { createMCPClient } from "@ai-sdk/mcp";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { auth } from "@/lib/auth";
 import { saveMessage, getConversation, updateConversationTitle, saveBooking } from "@/lib/db/queries";
 import { createLoggingHook } from "@/lib/ai-hooks";
 import { sendBookingConfirmation } from "@/lib/email";
+import { travelTools } from "@/lib/tools";
 
 function buildSystemPrompt(): string {
   const skillFiles = ["flight-search", "booking", "seat-management"];
@@ -41,39 +40,26 @@ export async function POST(req: Request) {
   // AI SDK v7 separates the UI representation from the model representation.
   const modelMessages = await convertToModelMessages(messages);
 
-  // MCP client is created per-request (serverless-safe).
-  // stdio spawns a subprocess locally — swap to HTTP transport for Vercel deployment (Phase 2).
-  const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["tsx", "mcp-server/index.ts"],
-  });
-  const mcpClient = await createMCPClient({ transport });
-  const tools = await mcpClient.tools();
-
   const result = streamText({
     model: anthropic("claude-sonnet-4-6"),
     system: buildSystemPrompt(),
     messages: modelMessages,
-    tools,
+    tools: travelTools,
     stopWhen: stepCountIs(5),
-    // onStepFinish fires after each LLM step (including tool-call steps)
     onStepFinish: createLoggingHook(),
   });
 
-  // toUIMessageStreamResponse streams back in the format useChat expects.
-  // onFinish fires once the full response is done — save to DB and close MCP.
   return result.toUIMessageStreamResponse({
     onFinish: async ({ responseMessage }) => {
-      await mcpClient.close();
       if (session?.user?.id && conversationId) {
         await saveMessage(conversationId, "assistant", responseMessage);
 
-        // Persist any flight bookings made in this exchange
+        // Persist any flight bookings made in this exchange.
+        // Inline tools return plain objects (not MCP's {content:[{text:...}]} shape).
         for (const part of responseMessage.parts) {
-          if (part.type === "dynamic-tool" && (part as { toolName?: string }).toolName === "book_flight") {
-            const p = part as { toolName: string; state: string; output?: { content?: Array<{ text: string }> } };
-            if (p.state === "output-available" && p.output?.content?.[0]?.text) {
-              const b = JSON.parse(p.output.content[0].text);
+          const p = part as unknown as { toolName?: string; state?: string; result?: unknown };
+          if (p.toolName === "book_flight" && p.state === "result") {
+              const b = p.result as { bookingId: string; flightId: string; passengerName: string; seat: string };
               await saveBooking({
                 userId: session.user.id,
                 bookingRef: b.bookingId,
@@ -82,7 +68,6 @@ export async function POST(req: Request) {
                 seat: b.seat,
               });
 
-              // Send confirmation email if we have the user's email
               if (session.user.email) {
                 await sendBookingConfirmation({
                   to: session.user.email,
@@ -90,13 +75,11 @@ export async function POST(req: Request) {
                   bookingRef: b.bookingId,
                   flightId: b.flightId,
                   seat: b.seat,
-                }).catch(() => {}); // non-critical — don't fail the response if email fails
+                }).catch(() => {});
               }
-            }
           }
         }
 
-        // Generate a title after the very first exchange (messages has only 1 entry = first user msg)
         if (messages.length === 1) {
           const userText = messages[0].parts
             ?.find((p): p is { type: "text"; text: string } => p.type === "text")
