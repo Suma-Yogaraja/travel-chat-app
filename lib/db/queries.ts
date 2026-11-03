@@ -41,6 +41,12 @@ export async function updateConversationTitle(id: string, title: string) {
     .where(eq(conversations.id, id));
 }
 
+export async function deleteConversation(id: string, userId: string) {
+  await db
+    .delete(conversations)
+    .where(and(eq(conversations.id, id), eq(conversations.userId, userId)));
+}
+
 // --- Messages ---
 
 export async function getMessages(conversationId: string, userId: string) {
