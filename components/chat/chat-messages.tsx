@@ -30,11 +30,11 @@ function MarkdownText({ text }: { text: string }) {
 
     // Heading
     if (line.startsWith("### ")) {
-      elements.push(<h3 key={i} className="font-semibold text-white mt-3 mb-1 text-[15px]">{renderInline(line.slice(4))}</h3>);
+      elements.push(<h3 key={elements.length} className="font-semibold text-white mt-3 mb-1 text-[15px]">{renderInline(line.slice(4))}</h3>);
       i++; continue;
     }
     if (line.startsWith("## ")) {
-      elements.push(<h2 key={i} className="font-semibold text-white mt-3 mb-1 text-base">{renderInline(line.slice(3))}</h2>);
+      elements.push(<h2 key={elements.length} className="font-semibold text-white mt-3 mb-1 text-base">{renderInline(line.slice(3))}</h2>);
       i++; continue;
     }
 
@@ -46,7 +46,7 @@ function MarkdownText({ text }: { text: string }) {
         i++;
       }
       elements.push(
-        <ul key={i} className="my-1.5 pl-5 space-y-0.5 list-disc">
+        <ul key={elements.length} className="my-1.5 pl-5 space-y-0.5 list-disc">
           {items.map((item, j) => <li key={j} className="text-[#d4d4d4]">{renderInline(item)}</li>)}
         </ul>
       );
@@ -61,7 +61,7 @@ function MarkdownText({ text }: { text: string }) {
         i++;
       }
       elements.push(
-        <ol key={i} className="my-1.5 pl-5 space-y-0.5 list-decimal">
+        <ol key={elements.length} className="my-1.5 pl-5 space-y-0.5 list-decimal">
           {items.map((item, j) => <li key={j} className="text-[#d4d4d4]">{renderInline(item)}</li>)}
         </ol>
       );
@@ -72,7 +72,7 @@ function MarkdownText({ text }: { text: string }) {
     if (line.trim().startsWith("|")) { i++; continue; }
 
     // Paragraph
-    elements.push(<p key={i} className="text-[15px] text-[#d4d4d4] leading-[1.7]">{renderInline(line)}</p>);
+    elements.push(<p key={elements.length} className="text-[15px] text-[#d4d4d4] leading-[1.7]">{renderInline(line)}</p>);
     i++;
   }
 

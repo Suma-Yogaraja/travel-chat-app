@@ -66,16 +66,19 @@ export async function POST(req: Request) {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function placeholderFor(toolName: string, output: unknown): string {
+  function placeholderFor(toolName: string, output: unknown): Record<string, string> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const o = (output ?? {}) as Record<string, any>;
-    if (toolName === "get_flight_seats") return "[Seat map already shown to user]";
-    if (toolName === "search_flights")   return "[Flight results already shown to user]";
-    if (toolName === "book_flight")      return `[Booking confirmed: ref=${o.bookingId ?? o.bookingRef}, flight=${o.flightId}, seat=${o.seat}]`;
-    if (toolName === "get_booking" || toolName === "get_guest_booking")
-      return `[Booking on file: ref=${o.bookingRef ?? o.bookingId}, flight=${o.flightId}, seat=${o.seat}]`;
-    if (toolName === "change_seat")      return `[Seat changed to ${o.seat ?? "new seat"}]`;
-    return `[${toolName} result already processed]`;
+    const o = (output && typeof output === "object" ? output : {}) as Record<string, any>;
+    let summary: string;
+    if (toolName === "get_flight_seats") summary = "[Seat map already shown to user]";
+    else if (toolName === "search_flights") summary = "[Flight results already shown to user]";
+    else if (toolName === "book_flight") summary = `[Booking confirmed: ref=${o.bookingId ?? o.bookingRef}, flight=${o.flightId}, seat=${o.seat}]`;
+    else if (toolName === "get_booking" || toolName === "get_guest_booking")
+      summary = `[Booking on file: ref=${o.bookingRef ?? o.bookingId}, flight=${o.flightId}, seat=${o.seat}]`;
+    else if (toolName === "change_seat") summary = `[Seat changed to ${o.seat ?? "new seat"}]`;
+    else summary = `[${toolName} result already processed]`;
+    // Return an object — AI SDK does `'providerOptions' in output` which throws on strings
+    return { _trimmed: summary };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -87,7 +90,9 @@ export async function POST(req: Request) {
       content: (msg.content ?? []).map((part: any) => {
         if (part.type !== "tool-result" || !TRIM_TOOLS.has(part.toolName)) return part;
         if (lastIdx[part.toolName] === i) return part; // keep the most recent full result
-        return { ...part, output: placeholderFor(part.toolName, part.output) };
+        // part.output or part.result depending on AI SDK version
+        const raw = part.output ?? part.result;
+        return { ...part, output: placeholderFor(part.toolName, raw) };
       }),
     };
   });
