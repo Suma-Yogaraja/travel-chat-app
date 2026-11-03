@@ -24,7 +24,7 @@ function generateOtp() {
 }
 
 export function createTravelTools(userId: string | undefined, userEmail?: string) {
-  return {
+  const tools = {
     search_flights: tool({
       description: "Search for available flights between two cities on a specific date",
       inputSchema: z.object({
@@ -242,5 +242,25 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         return { success: true, booking: updated, message: `Seat changed to ${newSeat}. A confirmation has been sent to your email.` };
       },
     }),
+  };
+
+  // Only send tools the user can actually use — saves ~1200 tokens/request on unused schemas.
+  if (userId) {
+    return {
+      search_flights:   tools.search_flights,
+      get_flight_seats: tools.get_flight_seats,
+      book_flight:      tools.book_flight,
+      get_booking:      tools.get_booking,
+      change_seat:      tools.change_seat,
+    };
+  }
+  return {
+    search_flights:        tools.search_flights,
+    get_flight_seats:      tools.get_flight_seats,
+    book_flight:           tools.book_flight,
+    get_guest_booking:     tools.get_guest_booking,
+    request_otp:           tools.request_otp,
+    verify_and_cancel:     tools.verify_and_cancel,
+    verify_and_change_seat: tools.verify_and_change_seat,
   };
 }

@@ -9,17 +9,18 @@ import { createLoggingHook } from "@/lib/ai-hooks";
 import { sendBookingConfirmation } from "@/lib/email";
 import { createTravelTools } from "@/lib/tools";
 
-function buildSystemPrompt(isGuest: boolean): string {
-  const skillFiles = ["flight-search", "booking", "seat-management"];
-  const skills = skillFiles
-    .map(name => readFileSync(join(process.cwd(), "skills", `${name}.md`), "utf-8"))
-    .join("\n\n---\n\n");
+// Read skill files once at module load — not per request.
+// Prompt caching handles token cost; this avoids repeated disk I/O.
+const SKILLS_BASE = ["flight-search", "booking", "seat-management"]
+  .map(name => readFileSync(join(process.cwd(), "skills", `${name}.md`), "utf-8"))
+  .join("\n\n---\n\n");
 
+function buildSystemPrompt(isGuest: boolean): string {
   const authContext = isGuest
     ? "CURRENT USER: Guest (not signed in). Collect their email before calling book_flight. Do NOT ask whether they are signed in — you already know they are not."
     : "CURRENT USER: Signed in. Do not ask for email or auth status.";
 
-  return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${skills}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;
+  return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;
 }
 
 export async function POST(req: Request) {
@@ -60,7 +61,7 @@ export async function POST(req: Request) {
     }
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const modelMessages = rawMessages.map((msg: any, i: number) => {
+  const trimmedMessages = rawMessages.map((msg: any, i: number) => {
     if (msg.role !== "tool") return msg;
     return {
       ...msg,
@@ -73,6 +74,10 @@ export async function POST(req: Request) {
       }),
     };
   });
+
+  // Cap history at 30 model messages (~15 exchanges). Beyond that, old context
+  // adds cost without helping — any travel booking fits within 15 turns.
+  const modelMessages = trimmedMessages.slice(-30);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function handleStep(step: any) {
