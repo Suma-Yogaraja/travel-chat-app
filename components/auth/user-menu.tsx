@@ -54,7 +54,6 @@ export function UserMenu({ session }: { session: Session }) {
             <div className="min-w-0">
               <p className="text-sm font-medium text-white truncate">{user?.name}</p>
               <p className="text-xs text-gray-400 truncate">{user?.email}</p>
-              <p className="text-xs text-gray-600 mt-0.5">GitHub account</p>
             </div>
           </div>
 

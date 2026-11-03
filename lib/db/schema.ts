@@ -6,6 +6,7 @@ export const users = pgTable("users", {
   email:         text("email").notNull().unique(),
   emailVerified: timestamp("email_verified", { mode: "date" }),
   image:         text("image"),
+  passwordHash:  text("password_hash"),
 });
 
 export const accounts = pgTable("accounts", {
@@ -67,8 +68,18 @@ export const bookings = pgTable("bookings", {
 
 export const guestOtps = pgTable("guest_otps", {
   id:         text("id").primaryKey(),
-  bookingRef: text("booking_ref").notNull(),
+  bookingRef: text("booking_ref"),           // null for booking OTPs (no ref yet)
+  email:      text("email"),                 // null for seat_change OTPs (use bookingRef)
+  purpose:    text("purpose").notNull().default("seat_change"), // "seat_change" | "booking"
   otp:        text("otp").notNull(),
   expiresAt:  timestamp("expires_at", { mode: "date" }).notNull(),
   usedAt:     timestamp("used_at", { mode: "date" }),
+});
+
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id:        text("id").primaryKey(),
+  userId:    text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+  usedAt:    timestamp("used_at", { mode: "date" }),
 });

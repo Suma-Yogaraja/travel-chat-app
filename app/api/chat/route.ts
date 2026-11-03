@@ -19,7 +19,7 @@ const SKILLS_BASE = ["flight-search", "booking", "seat-management"]
 
 function buildSystemPrompt(isGuest: boolean): string {
   const authContext = isGuest
-    ? "CURRENT USER: Guest (not signed in). Collect their email before calling book_flight. Do NOT ask whether they are signed in — you already know they are not."
+    ? "CURRENT USER: Guest (not signed in). Before booking, call send_booking_otp with their email, wait for them to confirm the code, then call book_flight with the otp included. Do NOT ask whether they are signed in — you already know they are not."
     : "CURRENT USER: Signed in. Do not ask for email or auth status.";
 
   return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;

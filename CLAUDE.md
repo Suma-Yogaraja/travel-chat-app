@@ -42,5 +42,18 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - History cap: last 30 model messages only
 - Output cap: `maxOutputTokens: 350`, `stopWhen: stepCountIs(4)`
 
+## Auth providers
+- GitHub OAuth, Google OAuth, Email/Password (Credentials) — all configured in `lib/auth.ts`
+- Registration: `POST /api/auth/register` → bcrypt hash → `createUserWithPassword`
+- Forgot password: `POST /api/auth/forgot-password` → token stored as SHA-256 hash in `password_reset_tokens`, email sent via Nodemailer
+- Reset password: `POST /api/auth/reset-password` → verify token hash → `updateUserPassword`
+- Password min 8 chars, bcrypt cost 12
+
+## Guest email verification
+- Before a guest booking, Claude calls `send_booking_otp` with the email → OTP sent, stored hashed in `guest_otps` with `purpose = "booking"`
+- Guest confirms code in chat → `book_flight` called with `otp` field → verified via `getValidBookingOtp`, then booking saved
+- Existing seat-change/cancel OTP flow unchanged (`purpose = "seat_change"`, keyed by bookingRef)
+
 ## Still to do
 - Real Amadeus flight API via `amadeus-provider.ts` (swap via `FLIGHT_PROVIDER` env var)
+- Google OAuth: requires `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` in `.env.local` and Vercel env vars

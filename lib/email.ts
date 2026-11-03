@@ -39,8 +39,13 @@ interface CancellationParams {
 
 interface OtpParams {
   to: string;
-  bookingRef: string;
+  bookingRef?: string;
   otp: string;
+}
+
+interface PasswordResetParams {
+  to: string;
+  resetLink: string;
 }
 
 export async function sendBookingConfirmation(params: BookingConfirmationParams) {
@@ -118,6 +123,9 @@ export async function sendCancellationConfirmation(params: CancellationParams) {
 
 export async function sendOtpEmail(params: OtpParams) {
   const { to, bookingRef, otp } = params;
+  const context = bookingRef
+    ? `to verify your identity for booking ${bookingRef}`
+    : `to verify your email address before completing your booking`;
   await transporter.sendMail({
     from: from(),
     to,
@@ -125,11 +133,29 @@ export async function sendOtpEmail(params: OtpParams) {
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
         <h2 style="margin: 0 0 8px;">🔐 Your verification code</h2>
-        <p style="color: #6b7280; margin: 0 0 24px;">Use this code to verify your identity for booking ${bookingRef}.</p>
+        <p style="color: #6b7280; margin: 0 0 24px;">Use this code ${context}.</p>
         <div style="background: #f9fafb; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
           <span style="font-size: 36px; font-weight: 700; letter-spacing: 8px; font-family: monospace;">${otp}</span>
         </div>
         <p style="color: #9ca3af; font-size: 12px;">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+export async function sendPasswordResetEmail(params: PasswordResetParams) {
+  const { to, resetLink } = params;
+  await transporter.sendMail({
+    from: from(),
+    to,
+    subject: "Reset your TravelChat password",
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="margin: 0 0 8px;">🔑 Reset your password</h2>
+        <p style="color: #6b7280; margin: 0 0 24px;">Click the button below to set a new password. This link expires in 1 hour.</p>
+        <a href="${resetLink}" style="display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 14px; margin-bottom: 24px;">Reset password</a>
+        <p style="color: #6b7280; font-size: 13px;">Or copy this link: <span style="font-family: monospace; word-break: break-all;">${resetLink}</span></p>
+        <p style="color: #9ca3af; font-size: 12px; margin-top: 24px;">If you didn't request a password reset, ignore this email — your password won't change.</p>
       </div>
     `,
   });

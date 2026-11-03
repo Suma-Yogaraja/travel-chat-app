@@ -5,6 +5,7 @@ import {
   getBookingByRef, updateBookingSeat,
   getBookingByRefOnly, cancelBookingByRef, updateBookingSeatByRef,
   saveBooking, saveGuestOtp, getValidOtp, markOtpUsed,
+  saveBookingVerificationOtp, getValidBookingOtp,
 } from "./db/queries";
 import {
   sendBookingConfirmation, sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
@@ -28,23 +29,48 @@ function generateOtp() {
 
 export function createTravelTools(userId: string | undefined, userEmail?: string) {
   const tools = {
+    send_booking_otp: tool({
+      description: "Send a 6-digit verification code to a guest's email before booking. Must be called before book_flight for guest users.",
+      inputSchema: z.object({
+        email: z.string().email().describe("Email address to send the verification code to"),
+      }),
+      execute: async ({ email }) => {
+        if (userId) return { error: "Not needed for signed-in users." };
+        const otp = generateOtp();
+        await saveBookingVerificationOtp(email, otp);
+        await sendOtpEmail({ to: email, otp })
+          .catch(err => console.error("[send_booking_otp] email error:", err));
+        return { sent: true };
+      },
+    }),
+
     book_flight: tool({
-      description: "Book a seat on a flight for a passenger",
+      description: "Book a seat on a flight for a passenger. For guests, send_booking_otp must be called first and the guest must confirm the code.",
       inputSchema: z.object({
         flightId:       z.string().describe("Flight ID e.g. F1"),
         passengerName:  z.string().describe("Full name of the passenger"),
         seatNumber:     z.string().describe("Seat number e.g. 12A"),
         passengerEmail: z.string().email().optional().describe("Required for guest bookings — email address for confirmation"),
+        otp:            z.string().length(6).optional().describe("Required for guest bookings — 6-digit code sent to email"),
       }),
-      execute: async ({ flightId, passengerName, seatNumber, passengerEmail }) => {
+      execute: async ({ flightId, passengerName, seatNumber, passengerEmail, otp }) => {
         // Validate seat availability via mock provider
         const providerResult = await provider.bookFlight({ flightId, passengerName, seatNumber });
 
         if (!userId) {
-          // Guest booking
+          // Guest booking — verify email ownership via OTP
           if (!passengerEmail) {
             return { error: "Please provide your email address so we can send your booking confirmation." };
           }
+          if (!otp) {
+            return { error: "Please provide the 6-digit verification code sent to your email." };
+          }
+          const otpRow = await getValidBookingOtp(passengerEmail, otp);
+          if (!otpRow) {
+            return { error: "Invalid or expired verification code. Please request a new one." };
+          }
+          await markOtpUsed(otpRow.id);
+
           const bookingRef = guestBookingRef();
           const gsUserId = guestUserId();
 
@@ -238,6 +264,7 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
     };
   }
   return {
+    send_booking_otp:       tools.send_booking_otp,
     book_flight:            tools.book_flight,
     get_guest_booking:      tools.get_guest_booking,
     request_otp:            tools.request_otp,

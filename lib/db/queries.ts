@@ -1,6 +1,6 @@
 import { eq, and, asc, desc, gt, isNull } from "drizzle-orm";
 import { db } from "./index";
-import { conversations, messages, bookings, guestOtps } from "./schema";
+import { conversations, messages, bookings, guestOtps, users, passwordResetTokens } from "./schema";
 import { randomUUID, createHash } from "crypto";
 
 function hashOtp(otp: string): string {
@@ -184,4 +184,90 @@ export async function markOtpUsed(id: string) {
     .update(guestOtps)
     .set({ usedAt: new Date() })
     .where(eq(guestOtps.id, id));
+}
+
+export async function saveBookingVerificationOtp(email: string, otp: string) {
+  const id = randomUUID();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await db.insert(guestOtps).values({ id, email, purpose: "booking", otp: hashOtp(otp), expiresAt });
+}
+
+export async function getValidBookingOtp(email: string, otp: string) {
+  const now = new Date();
+  const [row] = await db
+    .select()
+    .from(guestOtps)
+    .where(
+      and(
+        eq(guestOtps.email, email),
+        eq(guestOtps.purpose, "booking"),
+        eq(guestOtps.otp, hashOtp(otp)),
+        gt(guestOtps.expiresAt, now),
+        isNull(guestOtps.usedAt)
+      )
+    );
+  return row ?? null;
+}
+
+// --- Users (email/password auth) ---
+
+export async function getUserByEmail(email: string) {
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email.toLowerCase()));
+  return user ?? null;
+}
+
+export async function createUserWithPassword(params: {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+}) {
+  const [user] = await db
+    .insert(users)
+    .values({ ...params, email: params.email.toLowerCase() })
+    .returning();
+  return user;
+}
+
+export async function updateUserPassword(userId: string, passwordHash: string) {
+  await db
+    .update(users)
+    .set({ passwordHash })
+    .where(eq(users.id, userId));
+}
+
+// --- Password reset tokens ---
+
+export async function savePasswordResetToken(params: {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: Date;
+}) {
+  await db.insert(passwordResetTokens).values(params);
+}
+
+export async function getValidPasswordResetToken(tokenHash: string) {
+  const now = new Date();
+  const [row] = await db
+    .select()
+    .from(passwordResetTokens)
+    .where(
+      and(
+        eq(passwordResetTokens.tokenHash, tokenHash),
+        gt(passwordResetTokens.expiresAt, now),
+        isNull(passwordResetTokens.usedAt)
+      )
+    );
+  return row ?? null;
+}
+
+export async function markPasswordResetTokenUsed(id: string) {
+  await db
+    .update(passwordResetTokens)
+    .set({ usedAt: new Date() })
+    .where(eq(passwordResetTokens.id, id));
 }
