@@ -7,7 +7,6 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatInput } from "@/components/chat/chat-input";
-import { ToolCallLog } from "@/components/chat/tool-call-log";
 
 export default function ConversationPage() {
   const params = useParams<{ id: string }>();
@@ -15,6 +14,7 @@ export default function ConversationPage() {
   const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
   const didSendInitial = useRef(false);
+  const titleFetched = useRef(false);
   const [title, setTitle] = useState("New conversation");
 
   // In AI SDK v7, configure the API endpoint via DefaultChatTransport
@@ -53,6 +53,20 @@ export default function ConversationPage() {
     }
   }, [searchParams, sendMessage, router, params.id]);
 
+  // After first exchange on a new conversation, re-fetch title once the
+  // server's fire-and-forget title generation has had time to complete (~2s)
+  useEffect(() => {
+    if (titleFetched.current || messages.length < 2 || title !== "New conversation") return;
+    titleFetched.current = true;
+    const timer = setTimeout(() => {
+      fetch(`/api/conversations/${params.id}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.title) setTitle(data.title); })
+        .catch(() => {});
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [messages.length, title, params.id]);
+
   // Auto-scroll to latest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -78,10 +92,6 @@ export default function ConversationPage() {
         />
       </div>
 
-      {/* Tool call log sidebar — shows every MCP tool call in real time */}
-      <aside className="hidden w-72 flex-shrink-0 border-l border-gray-800 lg:flex lg:flex-col">
-        <ToolCallLog messages={messages} />
-      </aside>
     </div>
   );
 }

@@ -25,6 +25,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - `mcp-server/index.ts` — 5 MCP tools, exports `createTravelMcpServer()` and `main()`
 - `lib/mcp-bridge.ts` — connects MCP server in-memory, returns AI SDK-compatible tools
 - `lib/tools.ts` — session-aware direct tools (book, get_booking, change_seat, OTP)
+- `lib/rate-limit.ts` — sliding-window rate limiter (20 req/min per IP, in-memory per process)
 - `lib/flight-provider/index.ts` — FlightProvider interface + factory
 - `lib/db/schema.ts` — Drizzle table definitions
 - `lib/db/queries.ts` — all typed DB helpers

@@ -190,8 +190,8 @@ export async function POST(req: Request) {
       tools: allTools,
       maxOutputTokens: 350,  // Travel responses should be short — cap output to control cost
       stopWhen: stepCountIs(4),
-      onStepFinish: (step) => {
-        handleStep(step);
+      onStepFinish: async (step) => {
+        await handleStep(step);
         // Log token usage per step so we can monitor cost
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const s = step as any;

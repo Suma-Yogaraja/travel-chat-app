@@ -12,6 +12,13 @@ export function checkRateLimit(identifier: string): { allowed: boolean } {
   const now = Date.now();
   const windowStart = now - WINDOW_MS;
 
+  // Prune IPs with no recent activity to prevent unbounded Map growth
+  if (store.size > 500) {
+    for (const [key, ts] of store) {
+      if (ts[ts.length - 1] < windowStart) store.delete(key);
+    }
+  }
+
   const timestamps = (store.get(identifier) ?? []).filter(t => t > windowStart);
 
   if (timestamps.length >= MAX_REQUESTS) {

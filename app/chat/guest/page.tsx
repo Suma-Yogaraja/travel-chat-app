@@ -6,7 +6,6 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatInput } from "@/components/chat/chat-input";
-import { ToolCallLog } from "@/components/chat/tool-call-log";
 
 export default function GuestChatPage() {
   const router = useRouter();
@@ -60,10 +59,6 @@ export default function GuestChatPage() {
           />
         </div>
 
-        {/* Tool call log sidebar */}
-        <aside className="hidden w-72 flex-shrink-0 border-l border-gray-800 lg:flex lg:flex-col">
-          <ToolCallLog messages={messages} />
-        </aside>
       </div>
     </div>
   );
