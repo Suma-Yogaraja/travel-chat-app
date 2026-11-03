@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { MockProvider } from "../../lib/flight-provider/mock-provider";
+import { createTravelTools } from "../../lib/tools";
 
 // Layer 2: contract tests — verify each tool returns the expected shape.
 // These test the exact response structure the MCP server will send to Claude.
@@ -73,5 +74,33 @@ describe("change_seat tool contract", () => {
     const parsed = JSON.parse(response.content[0].text);
     expect(parsed.seat).toBe("9D");
     expect(parsed.bookingId).toBe(created.bookingId);
+  });
+});
+
+describe("tool list by user type", () => {
+  it("guest tools include send_booking_otp and exclude auth-only tools", () => {
+    const tools = createTravelTools(undefined);
+    const keys = Object.keys(tools);
+    expect(keys).toContain("send_booking_otp");
+    expect(keys).toContain("book_flight");
+    expect(keys).toContain("get_guest_booking");
+    expect(keys).toContain("request_otp");
+    expect(keys).toContain("verify_and_cancel");
+    expect(keys).toContain("verify_and_change_seat");
+    expect(keys).not.toContain("get_booking");
+    expect(keys).not.toContain("change_seat");
+  });
+
+  it("auth tools exclude send_booking_otp and guest-only tools", () => {
+    const tools = createTravelTools("user-123");
+    const keys = Object.keys(tools);
+    expect(keys).not.toContain("send_booking_otp");
+    expect(keys).not.toContain("get_guest_booking");
+    expect(keys).not.toContain("request_otp");
+    expect(keys).not.toContain("verify_and_cancel");
+    expect(keys).not.toContain("verify_and_change_seat");
+    expect(keys).toContain("book_flight");
+    expect(keys).toContain("get_booking");
+    expect(keys).toContain("change_seat");
   });
 });

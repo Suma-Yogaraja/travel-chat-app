@@ -36,11 +36,11 @@ export interface FlightProvider {
   changeSeat(params: { bookingId: string; newSeat: string }): Booking;
 }
 
+import { MockProvider } from "./mock-provider";
+
 export function getProvider(): FlightProvider {
-  // Swap to AmadeusProvider when FLIGHT_PROVIDER=amadeus
   if (process.env.FLIGHT_PROVIDER === "amadeus") {
     throw new Error("AmadeusProvider not yet implemented — set FLIGHT_PROVIDER=mock");
   }
-  const { MockProvider } = require("./mock-provider");
   return new MockProvider();
 }

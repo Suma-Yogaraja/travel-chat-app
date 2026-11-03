@@ -97,6 +97,17 @@ describe("getBooking", () => {
   });
 });
 
+// --- date validation (MCP layer) ---
+
+describe("search_flights date guard", () => {
+  it("mock provider itself accepts any date (date guard lives in MCP layer)", () => {
+    // The mock provider ignores date — it matches only on origin/destination.
+    // Past-date rejection happens in the MCP server handler, not here.
+    const results = provider.searchFlights({ origin: "JFK", destination: "LAX", date: "1994-01-01" });
+    expect(Array.isArray(results)).toBe(true);
+  });
+});
+
 // --- changeSeat ---
 
 describe("changeSeat", () => {

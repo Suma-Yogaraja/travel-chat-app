@@ -15,9 +15,15 @@ export function createTravelMcpServer(): McpServer {
       destination: z.string().describe("IATA airport code e.g. LAX"),
       date:        z.string().describe("Travel date in YYYY-MM-DD format"),
     },
-    async ({ origin, destination, date }) => ({
-      content: [{ type: "text", text: JSON.stringify(provider.searchFlights({ origin, destination, date }), null, 2) }],
-    })
+    async ({ origin, destination, date }) => {
+      const searchDate = new Date(date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (isNaN(searchDate.getTime()) || searchDate < today) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "Travel date must be today or in the future. Please provide a valid future date." }) }] };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(provider.searchFlights({ origin, destination, date }), null, 2) }] };
+    }
   );
 
   server.tool(

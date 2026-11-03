@@ -48,6 +48,11 @@ interface PasswordResetParams {
   resetLink: string;
 }
 
+interface WelcomeParams {
+  to: string;
+  name: string;
+}
+
 export async function sendBookingConfirmation(params: BookingConfirmationParams) {
   const { to, passengerName, bookingRef, flightId, seat } = params;
   await transporter.sendMail({
@@ -138,6 +143,23 @@ export async function sendOtpEmail(params: OtpParams) {
           <span style="font-size: 36px; font-weight: 700; letter-spacing: 8px; font-family: monospace;">${otp}</span>
         </div>
         <p style="color: #9ca3af; font-size: 12px;">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+export async function sendWelcomeEmail(params: WelcomeParams) {
+  const { to, name } = params;
+  await transporter.sendMail({
+    from: from(),
+    to,
+    subject: "Welcome to TravelChat!",
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="margin: 0 0 8px;">✈️ Welcome to TravelChat, ${name}!</h2>
+        <p style="color: #6b7280; margin: 0 0 24px;">Your account is ready. Start searching for flights and booking tickets through conversation.</p>
+        <a href="${process.env.NEXTAUTH_URL}/chat" style="display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 14px; margin-bottom: 24px;">Start chatting</a>
+        <p style="color: #9ca3af; font-size: 12px; margin-top: 24px;">This is a learning project — no real flights will be booked.</p>
       </div>
     `,
   });

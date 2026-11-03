@@ -49,10 +49,22 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - Reset password: `POST /api/auth/reset-password` → verify token hash → `updateUserPassword`
 - Password min 8 chars, bcrypt cost 12
 
+## Security model
+- Passwords: bcrypt (cost 12) — never stored in plaintext
+- Password reset tokens: stored as SHA-256 hashes in `password_reset_tokens`, expire after 1 hour, single-use
+- OTPs: stored as SHA-256 hashes in `guest_otps`, expire after 10 minutes, single-use
+- Session strategy: JWT (required for Credentials provider to coexist with DrizzleAdapter)
+- All DB queries on conversations/messages/bookings filter by `session.user.id`
+
 ## Guest email verification
 - Before a guest booking, Claude calls `send_booking_otp` with the email → OTP sent, stored hashed in `guest_otps` with `purpose = "booking"`
 - Guest confirms code in chat → `book_flight` called with `otp` field → verified via `getValidBookingOtp`, then booking saved
 - Existing seat-change/cancel OTP flow unchanged (`purpose = "seat_change"`, keyed by bookingRef)
+
+## Flight date validation
+- `search_flights` MCP tool rejects past dates before calling the provider — returns `{ error: "..." }` if date < today
+- Mock provider ignores date (matches only on origin/destination) — date guard lives at MCP layer
+- Claude also instructed in `skills/flight-search.md` to refuse past dates before calling the tool
 
 ## Still to do
 - Real Amadeus flight API via `amadeus-provider.ts` (swap via `FLIGHT_PROVIDER` env var)

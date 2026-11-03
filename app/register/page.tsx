@@ -5,9 +5,11 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+import { validatePassword } from "@/lib/password";
+
 export default function RegisterPage() {
   const router = useRouter();
-  const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
+  const [form, setForm] = useState({ firstName: "", lastName: "", email: "", password: "", confirm: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -18,7 +20,8 @@ export default function RegisterPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (form.password.length < 8) { setError("Password must be at least 8 characters"); return; }
+    const pwError = validatePassword(form.password);
+    if (pwError) { setError(pwError); return; }
     if (form.password !== form.confirm) { setError("Passwords don't match"); return; }
 
     setLoading(true);
@@ -26,7 +29,12 @@ export default function RegisterPage() {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name, email: form.email, password: form.password }),
+        body: JSON.stringify({
+          firstName: form.firstName,
+          lastName: form.lastName,
+          email: form.email,
+          password: form.password,
+        }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Registration failed"); return; }
@@ -52,15 +60,27 @@ export default function RegisterPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-xs text-gray-400">Full name</label>
-            <input
-              type="text" required autoComplete="name"
-              value={form.name} onChange={e => set("name", e.target.value)}
-              className="w-full rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3 text-sm text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-              placeholder="Ada Lovelace"
-            />
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="mb-1.5 block text-xs text-gray-400">First name</label>
+              <input
+                type="text" required autoComplete="given-name"
+                value={form.firstName} onChange={e => set("firstName", e.target.value)}
+                className="w-full rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3 text-sm text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                placeholder="Ada"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="mb-1.5 block text-xs text-gray-400">Last name</label>
+              <input
+                type="text" required autoComplete="family-name"
+                value={form.lastName} onChange={e => set("lastName", e.target.value)}
+                className="w-full rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3 text-sm text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                placeholder="Lovelace"
+              />
+            </div>
           </div>
+
           <div>
             <label className="mb-1.5 block text-xs text-gray-400">Email</label>
             <input
@@ -70,15 +90,18 @@ export default function RegisterPage() {
               placeholder="ada@example.com"
             />
           </div>
+
           <div>
             <label className="mb-1.5 block text-xs text-gray-400">Password</label>
             <input
               type="password" required autoComplete="new-password"
               value={form.password} onChange={e => set("password", e.target.value)}
               className="w-full rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3 text-sm text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-              placeholder="Min 8 characters"
+              placeholder="Min 8 chars, letters + numbers"
             />
+            <p className="mt-1.5 text-xs text-gray-600">At least 8 characters with at least one letter and one number</p>
           </div>
+
           <div>
             <label className="mb-1.5 block text-xs text-gray-400">Confirm password</label>
             <input
