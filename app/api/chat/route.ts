@@ -45,21 +45,38 @@ export async function POST(req: Request) {
   // AI SDK v7 separates the UI representation from the model representation.
   const rawMessages = await convertToModelMessages(messages);
 
-  // Trim large tool results from old history turns.
-  // get_flight_seats returns ~900 tokens (60 seats). search_flights returns ~600 tokens (10 flights).
-  // Re-sending them on every subsequent turn is the main source of token bloat.
-  // We keep only the most recent call's full output; older ones become a one-line placeholder.
-  const LARGE_TOOLS = new Set(["get_flight_seats", "search_flights"]);
+  // Trim tool results from old history turns — keep only the most recent call per tool.
+  // All tools produce JSON objects that re-inflate context on every subsequent message.
+  // For booking tools we preserve the key reference in the placeholder so the model
+  // still knows what was booked without carrying the full object.
+  const TRIM_TOOLS = new Set([
+    "get_flight_seats", "search_flights",
+    "book_flight", "get_booking", "get_guest_booking", "change_seat",
+  ]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lastIdx: Record<string, number> = {};
   rawMessages.forEach((msg: any, i: number) => {
     if (msg.role !== "tool") return;
     for (const part of msg.content ?? []) {
-      if (part.type === "tool-result" && LARGE_TOOLS.has(part.toolName)) {
+      if (part.type === "tool-result" && TRIM_TOOLS.has(part.toolName)) {
         lastIdx[part.toolName] = i;
       }
     }
   });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function placeholderFor(toolName: string, output: unknown): string {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const o = (output ?? {}) as Record<string, any>;
+    if (toolName === "get_flight_seats") return "[Seat map already shown to user]";
+    if (toolName === "search_flights")   return "[Flight results already shown to user]";
+    if (toolName === "book_flight")      return `[Booking confirmed: ref=${o.bookingId ?? o.bookingRef}, flight=${o.flightId}, seat=${o.seat}]`;
+    if (toolName === "get_booking" || toolName === "get_guest_booking")
+      return `[Booking on file: ref=${o.bookingRef ?? o.bookingId}, flight=${o.flightId}, seat=${o.seat}]`;
+    if (toolName === "change_seat")      return `[Seat changed to ${o.seat ?? "new seat"}]`;
+    return `[${toolName} result already processed]`;
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const trimmedMessages = rawMessages.map((msg: any, i: number) => {
     if (msg.role !== "tool") return msg;
@@ -67,10 +84,9 @@ export async function POST(req: Request) {
       ...msg,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       content: (msg.content ?? []).map((part: any) => {
-        if (part.type !== "tool-result" || !LARGE_TOOLS.has(part.toolName)) return part;
+        if (part.type !== "tool-result" || !TRIM_TOOLS.has(part.toolName)) return part;
         if (lastIdx[part.toolName] === i) return part; // keep the most recent full result
-        const label = part.toolName === "get_flight_seats" ? "Seat map" : "Flight results";
-        return { ...part, output: `[${label} already shown to user]` };
+        return { ...part, output: placeholderFor(part.toolName, part.output) };
       }),
     };
   });
@@ -155,7 +171,8 @@ export async function POST(req: Request) {
     model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
     messages: [cachedSystemMessage, cachedSystemAck, ...modelMessages],
     tools: createTravelTools(session?.user?.id, session?.user?.email ?? undefined),
-    stopWhen: stepCountIs(5),
+    maxTokens: 350,  // Travel responses should be short — cap output to control cost
+    stopWhen: stepCountIs(4),
     onStepFinish: (step) => {
       handleStep(step);
       // Log token usage per step so we can monitor cost
