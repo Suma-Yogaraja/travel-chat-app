@@ -42,11 +42,10 @@ function buildSeatMap(flightId: string): Seat[] {
   return seats;
 }
 
-// In-memory bookings store — resets on server restart (mock only)
-const bookings = new Map<string, Booking>();
-let bookingCounter = 0;
-
 export class MockProvider implements FlightProvider {
+  // Instance-level so each new MockProvider() (e.g. in tests) starts clean
+  private bookings = new Map<string, Booking>();
+  private bookingCounter = 0;
   searchFlights({ origin, destination, date }: { origin: string; destination: string; date: string }): Flight[] {
     return FLIGHTS.filter(
       f =>
@@ -71,7 +70,7 @@ export class MockProvider implements FlightProvider {
     if (!seat.available) throw new Error(`Seat ${seatNumber} is not available`);
 
     // Also check runtime bookings — buildSeatMap only knows hardcoded seeds
-    const runtimeTaken = [...bookings.values()].some(
+    const runtimeTaken = [...this.bookings.values()].some(
       b => b.flightId === flightId && b.seat === seatNumber
     );
     if (runtimeTaken) throw new Error(`Seat ${seatNumber} is not available`);
@@ -79,7 +78,7 @@ export class MockProvider implements FlightProvider {
     // Mark seat as taken by adding to the booking store
     // Include a random suffix so IDs are unique across Vercel cold starts
     // (the in-memory counter resets on every new function instance)
-    const bookingId = `BK-${Date.now()}-${(++bookingCounter).toString().padStart(3, "0")}`;
+    const bookingId = `BK-${Date.now()}-${(++this.bookingCounter).toString().padStart(3, "0")}`;
     const booking: Booking = {
       bookingId,
       flightId,
@@ -88,18 +87,18 @@ export class MockProvider implements FlightProvider {
       status: "confirmed",
       createdAt: new Date().toISOString(),
     };
-    bookings.set(bookingId, booking);
+    this.bookings.set(bookingId, booking);
     return booking;
   }
 
   getBooking(bookingId: string): Booking {
-    const booking = bookings.get(bookingId);
+    const booking = this.bookings.get(bookingId);
     if (!booking) throw new Error(`Booking ${bookingId} not found`);
     return booking;
   }
 
   changeSeat({ bookingId, newSeat }: { bookingId: string; newSeat: string }): Booking {
-    const booking = bookings.get(bookingId);
+    const booking = this.bookings.get(bookingId);
     if (!booking) throw new Error(`Booking ${bookingId} not found`);
 
     const seats = buildSeatMap(booking.flightId);
@@ -107,14 +106,14 @@ export class MockProvider implements FlightProvider {
     if (!seat) throw new Error(`Seat ${newSeat} does not exist`);
 
     // Check if another booking has this seat
-    const alreadyTaken = [...bookings.values()].some(
+    const alreadyTaken = [...this.bookings.values()].some(
       b => b.bookingId !== bookingId && b.flightId === booking.flightId && b.seat === newSeat
     );
     // Also check the hardcoded taken seats in the seat map
     if (!seat.available || alreadyTaken) throw new Error(`Seat ${newSeat} is not available`);
 
     const updated: Booking = { ...booking, seat: newSeat };
-    bookings.set(bookingId, updated);
+    this.bookings.set(bookingId, updated);
     return updated;
   }
 }
