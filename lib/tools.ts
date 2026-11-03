@@ -23,27 +23,11 @@ function generateOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// search_flights and get_flight_seats are served via the MCP server (lib/mcp-bridge.ts).
+// This file only defines session-aware tools that need auth/DB context.
+
 export function createTravelTools(userId: string | undefined, userEmail?: string) {
   const tools = {
-    search_flights: tool({
-      description: "Search for available flights between two cities on a specific date",
-      inputSchema: z.object({
-        origin:      z.string().describe("IATA airport code e.g. JFK"),
-        destination: z.string().describe("IATA airport code e.g. LAX"),
-        date:        z.string().describe("Travel date in YYYY-MM-DD format"),
-      }),
-      execute: async ({ origin, destination, date }) =>
-        provider.searchFlights({ origin, destination, date }),
-    }),
-
-    get_flight_seats: tool({
-      description: "Get the seat map for a flight showing available and taken seats",
-      inputSchema: z.object({
-        flightId: z.string().describe("Flight ID e.g. F1"),
-      }),
-      execute: async ({ flightId }) => provider.getFlightSeats(flightId),
-    }),
-
     book_flight: tool({
       description: "Book a seat on a flight for a passenger",
       inputSchema: z.object({
@@ -244,23 +228,20 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
     }),
   };
 
-  // Only send tools the user can actually use — saves ~1200 tokens/request on unused schemas.
+  // Only send tools the user can actually use — search_flights + get_flight_seats
+  // come from the MCP server (lib/mcp-bridge.ts) and are merged in the route.
   if (userId) {
     return {
-      search_flights:   tools.search_flights,
-      get_flight_seats: tools.get_flight_seats,
-      book_flight:      tools.book_flight,
-      get_booking:      tools.get_booking,
-      change_seat:      tools.change_seat,
+      book_flight:  tools.book_flight,
+      get_booking:  tools.get_booking,
+      change_seat:  tools.change_seat,
     };
   }
   return {
-    search_flights:        tools.search_flights,
-    get_flight_seats:      tools.get_flight_seats,
-    book_flight:           tools.book_flight,
-    get_guest_booking:     tools.get_guest_booking,
-    request_otp:           tools.request_otp,
-    verify_and_cancel:     tools.verify_and_cancel,
+    book_flight:            tools.book_flight,
+    get_guest_booking:      tools.get_guest_booking,
+    request_otp:            tools.request_otp,
+    verify_and_cancel:      tools.verify_and_cancel,
     verify_and_change_seat: tools.verify_and_change_seat,
   };
 }

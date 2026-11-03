@@ -1,5 +1,5 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
-import type { UIMessage } from "ai";
+import type { UIMessage, ToolSet } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -8,6 +8,7 @@ import { saveMessage, getConversation, updateConversationTitle, saveBooking } fr
 import { createLoggingHook } from "@/lib/ai-hooks";
 import { sendBookingConfirmation } from "@/lib/email";
 import { createTravelTools } from "@/lib/tools";
+import { connectMcpTools } from "@/lib/mcp-bridge";
 
 // Read skill files once at module load — not per request.
 // Prompt caching handles token cost; this avoids repeated disk I/O.
@@ -167,11 +168,16 @@ export async function POST(req: Request) {
     content: [{ type: "text", text: "Understood." }],
   };
 
+  // Connect MCP server in-process — provides search_flights + get_flight_seats
+  const { tools: mcpTools, close: closeMcp } = await connectMcpTools();
+  const sessionTools = createTravelTools(session?.user?.id, session?.user?.email ?? undefined);
+  const allTools = { ...mcpTools, ...sessionTools } as unknown as ToolSet;
+
   const result = streamText({
     model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
     messages: [cachedSystemMessage, cachedSystemAck, ...modelMessages],
-    tools: createTravelTools(session?.user?.id, session?.user?.email ?? undefined),
-    maxTokens: 350,  // Travel responses should be short — cap output to control cost
+    tools: allTools,
+    maxOutputTokens: 350,  // Travel responses should be short — cap output to control cost
     stopWhen: stepCountIs(4),
     onStepFinish: (step) => {
       handleStep(step);
@@ -186,6 +192,7 @@ export async function POST(req: Request) {
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ responseMessage }) => {
+      await closeMcp();
       if (session?.user?.id && conversationId) {
         await saveMessage(conversationId, "assistant", responseMessage);
 
