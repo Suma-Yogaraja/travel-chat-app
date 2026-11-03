@@ -1,10 +1,16 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
 
-// Update to match your verified Resend domain once you have one.
-// "onboarding@resend.dev" works for sending to your own account email only.
-const FROM = process.env.EMAIL_FROM ?? "TravelChat <onboarding@resend.dev>";
+function from() {
+  return `TravelChat <${process.env.GMAIL_USER}>`;
+}
 
 interface BookingConfirmationParams {
   to: string;
@@ -39,8 +45,8 @@ interface OtpParams {
 
 export async function sendBookingConfirmation(params: BookingConfirmationParams) {
   const { to, passengerName, bookingRef, flightId, seat } = params;
-  await resend.emails.send({
-    from: FROM,
+  await transporter.sendMail({
+    from: from(),
     to,
     subject: `Booking confirmed — ${bookingRef}`,
     html: `
@@ -63,8 +69,8 @@ export async function sendBookingConfirmation(params: BookingConfirmationParams)
 
 export async function sendSeatChangeConfirmation(params: SeatChangeParams) {
   const { to, passengerName, bookingRef, flightId, oldSeat, newSeat } = params;
-  await resend.emails.send({
-    from: FROM,
+  await transporter.sendMail({
+    from: from(),
     to,
     subject: `Seat updated — ${bookingRef}`,
     html: `
@@ -88,8 +94,8 @@ export async function sendSeatChangeConfirmation(params: SeatChangeParams) {
 
 export async function sendCancellationConfirmation(params: CancellationParams) {
   const { to, passengerName, bookingRef, flightId, seat } = params;
-  await resend.emails.send({
-    from: FROM,
+  await transporter.sendMail({
+    from: from(),
     to,
     subject: `Booking cancelled — ${bookingRef}`,
     html: `
@@ -112,8 +118,8 @@ export async function sendCancellationConfirmation(params: CancellationParams) {
 
 export async function sendOtpEmail(params: OtpParams) {
   const { to, bookingRef, otp } = params;
-  await resend.emails.send({
-    from: FROM,
+  await transporter.sendMail({
+    from: from(),
     to,
     subject: `Your TravelChat verification code — ${otp}`,
     html: `
