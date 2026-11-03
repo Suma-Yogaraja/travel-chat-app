@@ -37,7 +37,7 @@ export default function GuestChatPage() {
       {/* Guest banner */}
       <div className="flex items-center justify-between border-b border-gray-800 bg-gray-900/50 px-4 py-2">
         <span className="text-xs text-gray-500">
-          Guest mode — chats and bookings are not saved, no confirmation emails sent
+          Guest mode — your conversation history won't be saved
         </span>
         <button
           onClick={handleSignIn}
