@@ -42,5 +42,4 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - Output cap: `maxOutputTokens: 350`, `stopWhen: stepCountIs(4)`
 
 ## Still to do
-- Rate limiting on `/api/chat`
 - Real Amadeus flight API via `amadeus-provider.ts` (swap via `FLIGHT_PROVIDER` env var)
