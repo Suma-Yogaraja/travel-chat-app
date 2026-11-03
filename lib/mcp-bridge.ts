@@ -8,7 +8,11 @@ import { createTravelMcpServer } from "@/mcp-server/index";
 // Write operations and anything needing auth/session stay as direct tools in lib/tools.ts.
 const MCP_TOOL_NAMES = new Set(["search_flights", "get_flight_seats"]);
 
-export async function connectMcpTools(): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
+// Module-level singleton — connect once per server process, reuse across requests.
+let _tools: ToolSet | null = null;
+let _initPromise: Promise<ToolSet> | null = null;
+
+async function initMcpTools(): Promise<ToolSet> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
   const server = createTravelMcpServer();
@@ -40,5 +44,14 @@ export async function connectMcpTools(): Promise<{ tools: ToolSet; close: () => 
     });
   }
 
-  return { tools, close: () => client.close() };
+  return tools;
+}
+
+export async function connectMcpTools(): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
+  if (_tools) return { tools: _tools, close: async () => {} };
+  if (!_initPromise) {
+    _initPromise = initMcpTools().then(t => { _tools = t; return t; });
+  }
+  const tools = await _initPromise;
+  return { tools, close: async () => {} };
 }

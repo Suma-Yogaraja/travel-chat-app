@@ -1,7 +1,11 @@
-import { eq, and, asc, gt, isNull } from "drizzle-orm";
+import { eq, and, asc, desc, gt, isNull } from "drizzle-orm";
 import { db } from "./index";
 import { conversations, messages, bookings, guestOtps } from "./schema";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
+
+function hashOtp(otp: string): string {
+  return createHash("sha256").update(otp).digest("hex");
+}
 
 // --- Conversations ---
 
@@ -19,7 +23,7 @@ export async function getConversations(userId: string) {
     .select()
     .from(conversations)
     .where(eq(conversations.userId, userId))
-    .orderBy(asc(conversations.updatedAt));
+    .orderBy(desc(conversations.updatedAt));
 }
 
 export async function getConversation(id: string, userId: string) {
@@ -150,7 +154,7 @@ export async function updateBookingSeatByRef(bookingRef: string, newSeat: string
 export async function saveGuestOtp(bookingRef: string, otp: string) {
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-  await db.insert(guestOtps).values({ id, bookingRef, otp, expiresAt });
+  await db.insert(guestOtps).values({ id, bookingRef, otp: hashOtp(otp), expiresAt });
 }
 
 export async function getValidOtp(bookingRef: string, otp: string) {
@@ -161,7 +165,7 @@ export async function getValidOtp(bookingRef: string, otp: string) {
     .where(
       and(
         eq(guestOtps.bookingRef, bookingRef),
-        eq(guestOtps.otp, otp),
+        eq(guestOtps.otp, hashOtp(otp)),
         gt(guestOtps.expiresAt, now),
         isNull(guestOtps.usedAt)
       )

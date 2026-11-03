@@ -178,22 +178,28 @@ export async function POST(req: Request) {
   const sessionTools = createTravelTools(session?.user?.id, session?.user?.email ?? undefined);
   const allTools = { ...mcpTools, ...sessionTools } as unknown as ToolSet;
 
-  const result = streamText({
-    model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
-    messages: [cachedSystemMessage, cachedSystemAck, ...modelMessages],
-    tools: allTools,
-    maxOutputTokens: 350,  // Travel responses should be short — cap output to control cost
-    stopWhen: stepCountIs(4),
-    onStepFinish: (step) => {
-      handleStep(step);
-      // Log token usage per step so we can monitor cost
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const s = step as any;
-      if (s.usage) {
-        console.log(`[TOKENS] in: ${s.usage.promptTokens}, out: ${s.usage.completionTokens}`);
-      }
-    },
-  });
+  let result;
+  try {
+    result = streamText({
+      model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
+      messages: [cachedSystemMessage, cachedSystemAck, ...modelMessages],
+      tools: allTools,
+      maxOutputTokens: 350,  // Travel responses should be short — cap output to control cost
+      stopWhen: stepCountIs(4),
+      onStepFinish: (step) => {
+        handleStep(step);
+        // Log token usage per step so we can monitor cost
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const s = step as any;
+        if (s.usage) {
+          console.log(`[TOKENS] in: ${s.usage.promptTokens}, out: ${s.usage.completionTokens}`);
+        }
+      },
+    });
+  } catch (err) {
+    console.error("[chat] streamText error:", err);
+    return new Response("Internal server error", { status: 500 });
+  }
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ responseMessage }) => {
@@ -205,11 +211,11 @@ export async function POST(req: Request) {
           const userText = messages[0].parts
             ?.find((p): p is { type: "text"; text: string } => p.type === "text")
             ?.text ?? "";
-          const { text: title } = await generateText({
+          generateText({
             model: anthropic("claude-haiku-4-5-20251001"),
             prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${userText}". Respond with only the title, no quotes, no punctuation at the end.`,
-          });
-          await updateConversationTitle(conversationId, title.trim());
+          }).then(({ text: title }) => updateConversationTitle(conversationId, title.trim()))
+            .catch(err => console.error("[title] error:", err));
         }
       }
     },
