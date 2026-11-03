@@ -9,6 +9,7 @@ import { createLoggingHook } from "@/lib/ai-hooks";
 import { sendBookingConfirmation } from "@/lib/email";
 import { createTravelTools } from "@/lib/tools";
 import { connectMcpTools } from "@/lib/mcp-bridge";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Read skill files once at module load — not per request.
 // Prompt caching handles token cost; this avoids repeated disk I/O.
@@ -25,6 +26,11 @@ function buildSystemPrompt(isGuest: boolean): string {
 }
 
 export async function POST(req: Request) {
+  const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
+  if (!checkRateLimit(ip).allowed) {
+    return new Response("Too many requests", { status: 429 });
+  }
+
   const session = await auth();
   const { messages, conversationId }: { messages: UIMessage[]; conversationId?: string } =
     await req.json();
@@ -112,14 +118,12 @@ export async function POST(req: Request) {
 
     // toolResults already includes staticToolResults — don't spread both or we get duplicates
     const results = step.toolResults ?? [];
-    console.log("[step] toolResults count:", results.length);
 
     for (const tr of results) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const typed = tr as any;
       const toolName: string = typed.toolName ?? "";
       const output: unknown = typed.output ?? typed.result;
-      console.log("[step] tool:", toolName, "output:", JSON.stringify(output));
 
       if (toolName !== "book_flight") continue;
       const b = output as { bookingId: string; flightId: string; passengerName: string; seat: string };
@@ -211,9 +215,10 @@ export async function POST(req: Request) {
           const userText = messages[0].parts
             ?.find((p): p is { type: "text"; text: string } => p.type === "text")
             ?.text ?? "";
+          const safeText = userText.replace(/"/g, "'").slice(0, 200);
           generateText({
             model: anthropic("claude-haiku-4-5-20251001"),
-            prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${userText}". Respond with only the title, no quotes, no punctuation at the end.`,
+            prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${safeText}". Respond with only the title, no quotes, no punctuation at the end.`,
           }).then(({ text: title }) => updateConversationTitle(conversationId, title.trim()))
             .catch(err => console.error("[title] error:", err));
         }

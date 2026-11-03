@@ -70,6 +70,12 @@ export class MockProvider implements FlightProvider {
     if (!seat) throw new Error(`Seat ${seatNumber} does not exist on flight ${flightId}`);
     if (!seat.available) throw new Error(`Seat ${seatNumber} is not available`);
 
+    // Also check runtime bookings — buildSeatMap only knows hardcoded seeds
+    const runtimeTaken = [...bookings.values()].some(
+      b => b.flightId === flightId && b.seat === seatNumber
+    );
+    if (runtimeTaken) throw new Error(`Seat ${seatNumber} is not available`);
+
     // Mark seat as taken by adding to the booking store
     // Include a random suffix so IDs are unique across Vercel cold starts
     // (the in-memory counter resets on every new function instance)
