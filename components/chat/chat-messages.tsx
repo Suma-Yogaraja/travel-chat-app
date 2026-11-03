@@ -2,6 +2,82 @@
 
 import type { UIMessage } from "ai";
 import { SeatMap } from "./seat-map";
+import { FlightResults } from "./flight-results";
+
+// Inline markdown renderer — no external deps, handles what Claude actually outputs
+function renderInline(text: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**"))
+      return <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`"))
+      return <code key={i} className="text-[#a78bfa] bg-[#1a1a2e] px-1 py-0.5 rounded text-[13px] font-mono">{part.slice(1, -1)}</code>;
+    if (part.startsWith("*") && part.endsWith("*"))
+      return <em key={i} className="italic">{part.slice(1, -1)}</em>;
+    return part;
+  });
+}
+
+function MarkdownText({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.trim() === "") { i++; continue; }
+
+    // Heading
+    if (line.startsWith("### ")) {
+      elements.push(<h3 key={i} className="font-semibold text-white mt-3 mb-1 text-[15px]">{renderInline(line.slice(4))}</h3>);
+      i++; continue;
+    }
+    if (line.startsWith("## ")) {
+      elements.push(<h2 key={i} className="font-semibold text-white mt-3 mb-1 text-base">{renderInline(line.slice(3))}</h2>);
+      i++; continue;
+    }
+
+    // Unordered list — collect consecutive items
+    if (/^[-*] /.test(line.trim())) {
+      const items: string[] = [];
+      while (i < lines.length && /^[-*] /.test(lines[i].trim())) {
+        items.push(lines[i].trim().slice(2));
+        i++;
+      }
+      elements.push(
+        <ul key={i} className="my-1.5 pl-5 space-y-0.5 list-disc">
+          {items.map((item, j) => <li key={j} className="text-[#d4d4d4]">{renderInline(item)}</li>)}
+        </ul>
+      );
+      continue;
+    }
+
+    // Ordered list
+    if (/^\d+\. /.test(line.trim())) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\. /.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s*/, ""));
+        i++;
+      }
+      elements.push(
+        <ol key={i} className="my-1.5 pl-5 space-y-0.5 list-decimal">
+          {items.map((item, j) => <li key={j} className="text-[#d4d4d4]">{renderInline(item)}</li>)}
+        </ol>
+      );
+      continue;
+    }
+
+    // Skip markdown table rows (pipes) — data is shown via UI components
+    if (line.trim().startsWith("|")) { i++; continue; }
+
+    // Paragraph
+    elements.push(<p key={i} className="text-[15px] text-[#d4d4d4] leading-[1.7]">{renderInline(line)}</p>);
+    i++;
+  }
+
+  return <div className="space-y-1.5">{elements}</div>;
+}
 
 interface MessageBubbleProps {
   message: UIMessage;
@@ -11,8 +87,6 @@ interface MessageBubbleProps {
 function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const textParts = message.parts.filter(p => p.type === "text");
-  // Inline typed tools have type "tool-<name>"; MCP/dynamic tools have type "dynamic-tool".
-  // Stored messages normalize typed parts back to "dynamic-tool" across persistence boundaries.
   const toolParts = message.parts.filter(p => {
     const t = (p as { type: string }).type;
     return t === "dynamic-tool" || (t.startsWith("tool-") && t !== "tool-result");
@@ -34,7 +108,6 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex-1 min-w-0 space-y-4">
-        {/* Seat map */}
         {toolParts.map((part, i) => {
           const tool = part as {
             type: string;
@@ -43,13 +116,9 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
             input?: { flightId?: string };
             output?: unknown;
           };
-          // Inline tools: type is "tool-get_flight_seats", no toolName field.
-          // Dynamic/stored tools: type is "dynamic-tool", toolName field present.
           const toolName = tool.toolName ?? (tool.type.startsWith("tool-") ? tool.type.slice(5) : "");
 
           if (toolName === "get_flight_seats" && tool.state === "output-available") {
-            // Inline tools return the value directly (array of seats).
-            // MCP tools wrapped it in { content: [{ text: "..." }] }.
             let seats: unknown[] = [];
             if (Array.isArray(tool.output)) {
               seats = tool.output;
@@ -66,17 +135,32 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
               />
             );
           }
+
+          if (toolName === "search_flights" && tool.state === "output-available") {
+            let flights: unknown[] = [];
+            if (Array.isArray(tool.output)) {
+              flights = tool.output;
+            } else if (tool.output && typeof tool.output === "object" && "content" in tool.output) {
+              const mcp = tool.output as { content: Array<{ text: string }> };
+              try { flights = JSON.parse(mcp.content?.[0]?.text ?? "[]"); } catch { flights = []; }
+            }
+            if (flights.length > 0) {
+              return (
+                <FlightResults
+                  key={i}
+                  flights={flights as Parameters<typeof FlightResults>[0]["flights"]}
+                  onSelectFlight={id => onSendMessage?.(`I'd like to book flight ${id}`)}
+                />
+              );
+            }
+          }
+
           return null;
         })}
 
-        {/* Text */}
         {textParts.map((part, i) => {
           const text = part as { type: string; text: string };
-          return (
-            <p key={i} className="text-[15px] text-[#d4d4d4] leading-[1.7] whitespace-pre-wrap">
-              {text.text}
-            </p>
-          );
+          return <MarkdownText key={i} text={text.text} />;
         })}
       </div>
     </div>

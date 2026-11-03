@@ -42,7 +42,37 @@ export async function POST(req: Request) {
 
   // Convert UIMessage[] → ModelMessage[] for streamText.
   // AI SDK v7 separates the UI representation from the model representation.
-  const modelMessages = await convertToModelMessages(messages);
+  const rawMessages = await convertToModelMessages(messages);
+
+  // Trim large tool results from old history turns.
+  // get_flight_seats returns ~900 tokens (60 seats). search_flights returns ~600 tokens (10 flights).
+  // Re-sending them on every subsequent turn is the main source of token bloat.
+  // We keep only the most recent call's full output; older ones become a one-line placeholder.
+  const LARGE_TOOLS = new Set(["get_flight_seats", "search_flights"]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lastIdx: Record<string, number> = {};
+  rawMessages.forEach((msg: any, i: number) => {
+    if (msg.role !== "tool") return;
+    for (const part of msg.content ?? []) {
+      if (part.type === "tool-result" && LARGE_TOOLS.has(part.toolName)) {
+        lastIdx[part.toolName] = i;
+      }
+    }
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const modelMessages = rawMessages.map((msg: any, i: number) => {
+    if (msg.role !== "tool") return msg;
+    return {
+      ...msg,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      content: (msg.content ?? []).map((part: any) => {
+        if (part.type !== "tool-result" || !LARGE_TOOLS.has(part.toolName)) return part;
+        if (lastIdx[part.toolName] === i) return part; // keep the most recent full result
+        const label = part.toolName === "get_flight_seats" ? "Seat map" : "Flight results";
+        return { ...part, output: `[${label} already shown to user]` };
+      }),
+    };
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function handleStep(step: any) {
@@ -90,13 +120,46 @@ export async function POST(req: Request) {
     }
   }
 
+  const systemPrompt = buildSystemPrompt(!session?.user?.id);
+
+  // Prepend system as a cached user message so Anthropic can reuse it across requests.
+  // The CSV showed input_cache_read: $0.00 — no caching at all — because the system:
+  // string param doesn't get a cache_control header. This pattern fixes that:
+  // 2nd+ requests in the same 5-min window pay ~10% of the normal input price for
+  // the system prompt + tool definitions (~3500 tokens).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cachedSystemMessage: any = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: systemPrompt,
+        experimental_providerMetadata: {
+          anthropic: { cacheControl: { type: "ephemeral" } },
+        },
+      },
+    ],
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cachedSystemAck: any = {
+    role: "assistant",
+    content: [{ type: "text", text: "Understood." }],
+  };
+
   const result = streamText({
-    model: anthropic("claude-sonnet-4-6"),
-    system: buildSystemPrompt(!session?.user?.id),
-    messages: modelMessages,
+    model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
+    messages: [cachedSystemMessage, cachedSystemAck, ...modelMessages],
     tools: createTravelTools(session?.user?.id, session?.user?.email ?? undefined),
     stopWhen: stepCountIs(5),
-    onStepFinish: handleStep,
+    onStepFinish: (step) => {
+      handleStep(step);
+      // Log token usage per step so we can monitor cost
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const s = step as any;
+      if (s.usage) {
+        console.log(`[TOKENS] in: ${s.usage.promptTokens}, out: ${s.usage.completionTokens}`);
+      }
+    },
   });
 
   return result.toUIMessageStreamResponse({

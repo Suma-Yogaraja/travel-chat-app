@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import { SessionProvider } from "next-auth/react";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
   title: "TravelChat",
@@ -12,8 +11,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`h-full ${inter.variable}`}>
-      <body className="h-full">
+    <html lang="en" className={`h-full ${GeistSans.variable} ${GeistMono.variable}`}>
+      <body className={`h-full ${GeistSans.className}`}>
         <SessionProvider>{children}</SessionProvider>
       </body>
     </html>
