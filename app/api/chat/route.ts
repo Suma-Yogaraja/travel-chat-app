@@ -9,13 +9,17 @@ import { createLoggingHook } from "@/lib/ai-hooks";
 import { sendBookingConfirmation } from "@/lib/email";
 import { createTravelTools } from "@/lib/tools";
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(isGuest: boolean): string {
   const skillFiles = ["flight-search", "booking", "seat-management"];
   const skills = skillFiles
     .map(name => readFileSync(join(process.cwd(), "skills", `${name}.md`), "utf-8"))
     .join("\n\n---\n\n");
 
-  return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${skills}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.`;
+  const authContext = isGuest
+    ? "CURRENT USER: Guest (not signed in). Collect their email before calling book_flight. Do NOT ask whether they are signed in — you already know they are not."
+    : "CURRENT USER: Signed in. Do not ask for email or auth status.";
+
+  return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${skills}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;
 }
 
 export async function POST(req: Request) {
@@ -88,7 +92,7 @@ export async function POST(req: Request) {
 
   const result = streamText({
     model: anthropic("claude-sonnet-4-6"),
-    system: buildSystemPrompt(),
+    system: buildSystemPrompt(!session?.user?.id),
     messages: modelMessages,
     tools: createTravelTools(session?.user?.id, session?.user?.email ?? undefined),
     stopWhen: stepCountIs(5),

@@ -3,13 +3,23 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useEffect, useRef } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ToolCallLog } from "@/components/chat/tool-call-log";
 
 export default function GuestChatPage() {
+  const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  function handleSignIn() {
+    if (messages.length > 0) {
+      try {
+        localStorage.setItem("guestMessages", JSON.stringify(messages));
+      } catch { /* ignore */ }
+    }
+    router.push("/login");
+  }
 
   // No conversationId — messages live in React state only, never written to DB
   const { messages, sendMessage, status } = useChat({
@@ -27,14 +37,14 @@ export default function GuestChatPage() {
       {/* Guest banner */}
       <div className="flex items-center justify-between border-b border-gray-800 bg-gray-900/50 px-4 py-2">
         <span className="text-xs text-gray-500">
-          Guest mode — conversations are not saved
+          Guest mode — chats and bookings are not saved, no confirmation emails sent
         </span>
-        <Link
-          href="/login"
-          className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+        <button
+          onClick={handleSignIn}
+          className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0 ml-4"
         >
-          Sign in to save history →
-        </Link>
+          Sign in to save →
+        </button>
       </div>
 
       <div className="flex flex-1 overflow-hidden">

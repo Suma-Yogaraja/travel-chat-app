@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatInput } from "@/components/chat/chat-input";
+import { GuestMigrationPrompt } from "@/components/chat/guest-migration-prompt";
 
 // Blank new-chat page — conversation is created only when the user sends their first message
 export default function NewChatPage() {
@@ -31,8 +32,11 @@ export default function NewChatPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto px-4">
-        <ChatMessages messages={[]} onSendMessage={handleSend} />
+      <div className="flex-1 overflow-y-auto">
+        <GuestMigrationPrompt />
+        <div className="px-4">
+          <ChatMessages messages={[]} onSendMessage={handleSend} />
+        </div>
       </div>
       <ChatInput onSend={handleSend} disabled={pending} />
     </div>

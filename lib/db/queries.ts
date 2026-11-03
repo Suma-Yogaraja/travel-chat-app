@@ -1,6 +1,6 @@
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, gt, isNull } from "drizzle-orm";
 import { db } from "./index";
-import { conversations, messages, bookings } from "./schema";
+import { conversations, messages, bookings, guestOtps } from "./schema";
 import { randomUUID } from "crypto";
 
 // --- Conversations ---
@@ -40,7 +40,6 @@ export async function updateConversationTitle(id: string, title: string) {
 // --- Messages ---
 
 export async function getMessages(conversationId: string, userId: string) {
-  // Security: verify the conversation belongs to this user before returning messages
   const conv = await getConversation(conversationId, userId);
   if (!conv) throw new Error("Unauthorized");
 
@@ -54,7 +53,6 @@ export async function getMessages(conversationId: string, userId: string) {
 export async function saveMessage(
   conversationId: string,
   role: string,
-  // Full CoreMessage object stored as JSONB — preserves tool calls and results
   content: unknown
 ) {
   const id = randomUUID();
@@ -63,7 +61,6 @@ export async function saveMessage(
     .values({ id, conversationId, role, content })
     .returning();
 
-  // Touch updatedAt on the conversation so sidebar ordering stays fresh
   await db
     .update(conversations)
     .set({ updatedAt: new Date() })
@@ -80,6 +77,7 @@ export async function saveBooking(params: {
   flightId: string;
   passengerName: string;
   seat: string;
+  email?: string;
 }) {
   const id = randomUUID();
   const [booking] = await db
@@ -97,19 +95,20 @@ export async function getBookings(userId: string) {
     .orderBy(asc(bookings.createdAt));
 }
 
-export async function cancelBooking(bookingRef: string, userId: string) {
-  await db
-    .update(bookings)
-    .set({ status: "cancelled" })
-    .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)));
-}
-
+// Auth users: userId check enforced
 export async function getBookingByRef(bookingRef: string, userId: string) {
   const [row] = await db
     .select()
     .from(bookings)
     .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)));
   return row ?? null;
+}
+
+export async function cancelBooking(bookingRef: string, userId: string) {
+  await db
+    .update(bookings)
+    .set({ status: "cancelled" })
+    .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)));
 }
 
 export async function updateBookingSeat(bookingRef: string, userId: string, newSeat: string) {
@@ -119,4 +118,60 @@ export async function updateBookingSeat(bookingRef: string, userId: string, newS
     .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)))
     .returning();
   return row ?? null;
+}
+
+// Guest bookings: no userId check — caller must have verified OTP first
+export async function getBookingByRefOnly(bookingRef: string) {
+  const [row] = await db
+    .select()
+    .from(bookings)
+    .where(eq(bookings.bookingRef, bookingRef));
+  return row ?? null;
+}
+
+export async function cancelBookingByRef(bookingRef: string) {
+  await db
+    .update(bookings)
+    .set({ status: "cancelled" })
+    .where(eq(bookings.bookingRef, bookingRef));
+}
+
+export async function updateBookingSeatByRef(bookingRef: string, newSeat: string) {
+  const [row] = await db
+    .update(bookings)
+    .set({ seat: newSeat })
+    .where(eq(bookings.bookingRef, bookingRef))
+    .returning();
+  return row ?? null;
+}
+
+// --- Guest OTPs ---
+
+export async function saveGuestOtp(bookingRef: string, otp: string) {
+  const id = randomUUID();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+  await db.insert(guestOtps).values({ id, bookingRef, otp, expiresAt });
+}
+
+export async function getValidOtp(bookingRef: string, otp: string) {
+  const now = new Date();
+  const [row] = await db
+    .select()
+    .from(guestOtps)
+    .where(
+      and(
+        eq(guestOtps.bookingRef, bookingRef),
+        eq(guestOtps.otp, otp),
+        gt(guestOtps.expiresAt, now),
+        isNull(guestOtps.usedAt)
+      )
+    );
+  return row ?? null;
+}
+
+export async function markOtpUsed(id: string) {
+  await db
+    .update(guestOtps)
+    .set({ usedAt: new Date() })
+    .where(eq(guestOtps.id, id));
 }
