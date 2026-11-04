@@ -1,6 +1,6 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
 import type { UIMessage, ToolSet } from "ai";
-import { groq } from "@ai-sdk/groq";
+import { anthropic } from "@ai-sdk/anthropic";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { auth } from "@/lib/auth";
@@ -18,18 +18,13 @@ import { LangfuseVercelAiSdkIntegration } from "@langfuse/vercel-ai-sdk";
 const langfuseIntegration = new LangfuseVercelAiSdkIntegration();
 
 // Read skill files once at module load — not per request.
-// Prompt caching handles token cost; this avoids repeated disk I/O.
 const SKILLS_BASE = ["flight-search", "booking", "seat-management"]
   .map(name => readFileSync(join(process.cwd(), "skills", `${name}.md`), "utf-8"))
   .join("\n\n---\n\n");
 
-function buildSystemPrompt(isGuest: boolean): string {
-  const authContext = isGuest
-    ? "CURRENT USER: Guest (not signed in). Before booking, call send_booking_otp with their email, wait for them to confirm the code, then call book_flight with the otp included. Do NOT ask whether they are signed in — you already know they are not."
-    : "CURRENT USER: Signed in. Do not ask for email or auth status.";
-
-  return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;
-}
+// Static portion of the system prompt — cached by Anthropic after the first request.
+// The dynamic portion (date + auth context) is appended per-request without caching.
+const STATIC_SYSTEM = `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.`;
 
 export const POST = apiHandler(async (req: Request) => {
   const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
@@ -68,6 +63,7 @@ export const POST = apiHandler(async (req: Request) => {
   const TRIM_TOOLS = new Set([
     "get_flight_seats", "search_flights",
     "book_flight", "get_booking", "get_guest_booking", "change_seat",
+    "create_checkout",
   ]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lastIdx: Record<string, number> = {};
@@ -91,6 +87,7 @@ export const POST = apiHandler(async (req: Request) => {
     else if (toolName === "get_booking" || toolName === "get_guest_booking")
       summary = `[Booking on file: ref=${o.bookingRef ?? o.bookingId}, flight=${o.flightId}, seat=${o.seat}]`;
     else if (toolName === "change_seat") summary = `[Seat changed to ${o.seat ?? "new seat"}]`;
+    else if (toolName === "create_checkout") summary = `[Checkout created: ref=${o.bookingRef}, flight=${o.flightId}, seat=${o.seatNumber}]`;
     else summary = `[${toolName} result already processed]`;
     // Return an object — AI SDK does `'providerOptions' in output` which throws on strings
     return { _trimmed: summary };
@@ -121,8 +118,13 @@ export const POST = apiHandler(async (req: Request) => {
     createLoggingHook()(step);
   }
 
-  const systemPrompt = buildSystemPrompt(!session?.user?.id);
-  const systemWithDate = `${systemPrompt}\n\nToday's date is ${new Date().toISOString().slice(0, 10)}. Use this to resolve relative dates like "today", "tomorrow", or "next Friday" into YYYY-MM-DD format.`;
+  const isGuest = !session?.user?.id;
+  const authContext = isGuest
+    ? "CURRENT USER: Guest (not signed in). Before booking, call send_booking_otp with their email, wait for them to confirm the code, then call book_flight with the otp included. Do NOT ask whether they are signed in — you already know they are not."
+    : "CURRENT USER: Signed in. Do not ask for email or auth status.";
+  const dynamicContext = `${authContext}\n\nToday's date is ${new Date().toISOString().slice(0, 10)}. Use this to resolve relative dates like "today", "tomorrow", or "next Friday" into YYYY-MM-DD format.`;
+
+  const fullSystem = `${STATIC_SYSTEM}\n\n${dynamicContext}`;
 
   // Connect MCP server in-process — provides search_flights + get_flight_seats
   const { tools: mcpTools, close: closeMcp } = await connectMcpTools();
@@ -130,8 +132,8 @@ export const POST = apiHandler(async (req: Request) => {
   const allTools = { ...mcpTools, ...sessionTools } as unknown as ToolSet;
 
   const result = streamText({
-    model: groq("openai/gpt-oss-120b"),
-    system: systemWithDate,
+    model: anthropic("claude-haiku-4-5-20251001"),
+    system: fullSystem,
     messages: modelMessages,
     tools: allTools,
     maxOutputTokens: 600,
@@ -163,7 +165,7 @@ export const POST = apiHandler(async (req: Request) => {
             ?.text ?? "";
           const safeText = userText.replace(/"/g, "'").slice(0, 200);
           generateText({
-            model: groq("openai/gpt-oss-120b"),
+            model: anthropic("claude-haiku-4-5-20251001"),
             prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${safeText}". Respond with ONLY the title, no quotes, no punctuation at the end, nothing else.`,
           }).then(({ text: title }) => updateConversationTitle(conversationId, title.trim()))
             .catch(err => console.error("[title] error:", err));

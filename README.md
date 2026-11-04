@@ -25,7 +25,7 @@ Built as a learning project to understand core AI engineering concepts: MCP serv
 |---|---|
 | Framework | Next.js 16 App Router |
 | AI | Vercel AI SDK v7 |
-| Model | Groq `openai/gpt-oss-120b` (swap to Claude Haiku in `app/api/chat/route.ts`) |
+| Model | Groq `llama-3.3-70b-versatile` (swap to Claude Haiku in `app/api/chat/route.ts`) |
 | MCP | `@modelcontextprotocol/sdk` (InMemoryTransport) |
 | Auth | NextAuth v5 — GitHub OAuth, Google OAuth, Credentials |
 | Database | Neon Postgres |

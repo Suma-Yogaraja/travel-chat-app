@@ -5,13 +5,13 @@ A chat-based travel app where users search flights, book tickets, and change sea
 
 ## Architecture
 - **MCP server** (`mcp-server/`) exposes 5 travel tools. The app connects via `InMemoryTransport` (see `lib/mcp-bridge.ts`) — no subprocess, no stdio. `mcp-server/main()` is still exported for standalone use with Claude Desktop.
-- **Tool split**: `search_flights` + `get_flight_seats` come from the MCP server via `lib/mcp-bridge.ts`. Session-aware tools are in `lib/tools.ts` — `create_checkout` (auth), `get_booking`, `change_seat`, OTP tools + `book_flight` (guests only).
+- **Tool split**: `search_flights` + `get_flight_seats` come from the MCP server via `lib/mcp-bridge.ts`. Session-aware tools are in `lib/tools.ts` — `create_checkout` (both auth and guest), `get_booking`, `change_seat` (auth), OTP tools (`send_booking_otp`, `get_guest_booking`, `request_otp`, `verify_and_cancel`, `verify_and_change_seat`) (guests only).
 - **Flight data** comes from `lib/flight-provider/` — always use `getProvider()`, never import mock-provider directly.
 - **Skills** in `skills/` are `.md` files loaded once at module level (not per-request) and composed into the system prompt.
 - **Dual mode**: Guest (`/chat/guest`) = in-memory React state, no DB. Authenticated (`/chat/[id]`) = Postgres-persisted.
 - **Auth** via NextAuth v5 — GitHub OAuth, Google OAuth, Email/Password (Credentials). Session available via `auth()` in server components and API routes.
 - **Email** via Nodemailer + Gmail. Requires `GMAIL_USER` and `GMAIL_APP_PASSWORD` in `.env.local`.
-- **Payments** via Stripe Checkout (hosted page). Auth users go through Stripe; guests use OTP + direct booking.
+- **Payments** via Stripe Checkout (hosted page). Both auth users and guests go through Stripe; guests must verify email via OTP before `create_checkout` is called.
 
 ## Conventions
 - All MCP tool inputs must use Zod schemas.
@@ -25,7 +25,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 ## Key files
 - `mcp-server/index.ts` — 5 MCP tools, exports `createTravelMcpServer()` and `main()`. `get_flight_seats` falls back to a generated seat map if provider returns 0 seats.
 - `lib/mcp-bridge.ts` — connects MCP server in-memory, returns AI SDK-compatible tools
-- `lib/tools.ts` — session-aware direct tools: `create_checkout` (auth), `book_flight` + OTP tools (guest), `get_booking`, `change_seat`
+- `lib/tools.ts` — session-aware direct tools: `create_checkout` (auth + guest via OTP), OTP tools (guest), `get_booking`, `change_seat` (auth)
 - `lib/stripe.ts` — Stripe client singleton, circuit breaker (3 failures → 60s open), live key guard
 - `lib/rate-limit.ts` — sliding-window rate limiter (20 req/min per IP, in-memory per process)
 - `lib/flight-provider/index.ts` — FlightProvider interface + factory
@@ -43,7 +43,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - `skills/` — Claude's travel assistant behaviour rules
 
 ## Model
-Currently using **Groq** (`openai/gpt-oss-120b`) via `@ai-sdk/groq` — free tier, no Anthropic credits needed.
+Currently using **Claude Haiku** (`claude-haiku-4-5-20251001`) via `@ai-sdk/anthropic`. Follows skill instructions reliably and supports prompt caching. To switch to Groq (free tier): swap import to `@ai-sdk/groq` and model to `groq("llama-3.3-70b-versatile")` — avoid `openai/gpt-oss-120b` which has an 8000 TPM limit too small for seat map + flight results.
 To switch back to Claude Haiku (more reliable tool calling): swap import to `@ai-sdk/anthropic` and model to `anthropic("claude-haiku-4-5-20251001")` in `app/api/chat/route.ts`, and restore the `cacheControl` prompt caching pattern.
 
 ## Cost optimisations in place
@@ -74,7 +74,7 @@ To switch back to Claude Haiku (more reliable tool calling): swap import to `@ai
 
 ## Guest email verification
 - Before a guest booking, Claude calls `send_booking_otp` with the email → OTP sent, stored hashed in `guest_otps` with `purpose = "booking"`
-- Guest confirms code in chat → `book_flight` called with `otp` field → verified via `getValidBookingOtp`, then booking saved
+- Guest confirms code in chat → `create_checkout` called with `passengerEmail` + `otp` → verified atomically via `verifyAndConsumeBookingOtp`, then Stripe session created with GS- booking ref
 - Existing seat-change/cancel OTP flow unchanged (`purpose = "seat_change"`, keyed by bookingRef)
 
 ## Flight date validation
@@ -135,7 +135,7 @@ Archived: `amadeus-provider.ts` — Amadeus shut down their free dev portal July
 
 ## Stripe payment
 
-Auth users go through Stripe Checkout (hosted page). Guests use OTP + direct booking (no payment).
+Both auth users and guests go through Stripe Checkout (hosted page). Guests must verify email via OTP first; auth users book directly with their session.
 
 **Flow:**
 1. Claude calls `create_checkout` → creates pending booking in DB + Stripe session → returns checkout URL

@@ -5,11 +5,11 @@ import type Stripe from "stripe";
 import {
   getBookingByRef, updateBookingSeat,
   getBookingByRefOnly, cancelBookingByRef, updateBookingSeatByRef,
-  saveBooking, saveGuestOtp, verifyAndConsumeOtp,
+  saveGuestOtp, verifyAndConsumeOtp,
   saveBookingVerificationOtp, verifyAndConsumeBookingOtp, createPendingBooking,
 } from "./db/queries";
 import {
-  sendBookingConfirmation, sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
+  sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
 } from "./email";
 import { withStripe } from "./stripe";
 
@@ -30,7 +30,7 @@ function generateOtp() {
 export function createTravelTools(userId: string | undefined, userEmail?: string) {
   const tools = {
     send_booking_otp: tool({
-      description: "Send a 6-digit verification code to a guest's email before booking. Must be called before book_flight for guest users.",
+      description: "Send a 6-digit verification code to a guest's email before booking. Must be called before create_checkout for guest users.",
       inputSchema: z.object({
         email: z.string().email().describe("Email address to send the verification code to"),
       }),
@@ -45,57 +45,6 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
           return { error: "Failed to send verification email. Please try again." };
         }
         return { sent: true };
-      },
-    }),
-
-    book_flight: tool({
-      description: "Book a seat on a flight for a passenger. For guests, send_booking_otp must be called first and the guest must confirm the code.",
-      inputSchema: z.object({
-        flightId:       z.string().describe("Flight ID e.g. F1"),
-        passengerName:  z.string().describe("Full name of the passenger"),
-        seatNumber:     z.string().describe("Seat number e.g. 12A"),
-        passengerEmail: z.string().email().optional().describe("Required for guest bookings — email address for confirmation"),
-        otp:            z.string().length(6).optional().describe("Required for guest bookings — 6-digit code sent to email"),
-      }),
-      execute: async ({ flightId, passengerName, seatNumber, passengerEmail, otp }) => {
-        // book_flight is only in the guest tool set — authenticated users use create_checkout
-        if (!userId) {
-          if (!passengerEmail) {
-            return { error: "Please provide your email address so we can send your booking confirmation." };
-          }
-          if (!otp) {
-            return { error: "Please provide the 6-digit verification code sent to your email." };
-          }
-          // Atomic verify + consume — prevents double-booking from concurrent requests
-          const otpRow = await verifyAndConsumeBookingOtp(passengerEmail, otp);
-          if (!otpRow) {
-            return { error: "Invalid or expired verification code. Please request a new one." };
-          }
-
-          const bookingRef = guestBookingRef();
-          const gsUserId = guestUserId();
-
-          await saveBooking({
-            userId: gsUserId,
-            bookingRef,
-            flightId,
-            passengerName,
-            seat: seatNumber,
-            email: passengerEmail,
-          });
-
-          await sendBookingConfirmation({
-            to: passengerEmail,
-            passengerName,
-            bookingRef,
-            flightId,
-            seat: seatNumber,
-          }).catch(err => console.error("[book_flight] email error:", err));
-
-          return { bookingId: bookingRef, flightId, passengerName, seat: seatNumber, status: "confirmed" };
-        }
-
-        return { error: "Signed-in users should use create_checkout to pay for bookings." };
       },
     }),
 
@@ -258,19 +207,38 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
     }),
 
     create_checkout: tool({
-      description: "Create a Stripe payment session to book a flight. Use this for authenticated (signed-in) users. Returns a checkout URL — the chat will show a Pay button.",
+      description: "Create a Stripe payment session to book a flight. Works for both signed-in users and guests. For guests, send_booking_otp must be called first — include passengerEmail and otp. Returns a checkout URL — the chat will show a Pay button.",
       inputSchema: z.object({
-        flightId:      z.string().describe("Flight ID e.g. F1 or DF-JFK-LAX-2026-11-05-0"),
-        passengerName: z.string().describe("Full name of the passenger"),
-        seatNumber:    z.string().describe("Seat number e.g. 12A"),
-        priceUsd:      z.number().positive().describe("Price in USD as shown to the user"),
+        flightId:       z.string().describe("Flight ID e.g. F1 or DF-JFK-LAX-2026-11-05-0"),
+        passengerName:  z.string().describe("Full name of the passenger"),
+        seatNumber:     z.string().describe("Seat number e.g. 12A"),
+        priceUsd:       z.number().positive().describe("Price in USD as shown to the user"),
+        passengerEmail: z.string().email().optional().describe("Required for guest bookings — email address"),
+        otp:            z.string().length(6).optional().describe("Required for guest bookings — 6-digit code sent to email"),
       }),
-      execute: async ({ flightId, passengerName, seatNumber, priceUsd }) => {
-        if (!userId) return { error: "Sign in required to pay for a booking." };
+      execute: async ({ flightId, passengerName, seatNumber, priceUsd, passengerEmail, otp }) => {
         if (priceUsd <= 0 || priceUsd > 10_000) return { error: "Invalid price." };
 
-        const bookingRef = `BK-${Date.now()}-${randomUUID().slice(0, 8)}`;
-        const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30-min window
+        let effectiveUserId: string;
+        let effectiveEmail: string | undefined;
+        let bookingRef: string;
+
+        if (!userId) {
+          // Guest path — OTP required to prove email ownership before payment
+          if (!passengerEmail) return { error: "Please provide your email address." };
+          if (!otp) return { error: "Please provide the 6-digit verification code sent to your email." };
+          const otpRow = await verifyAndConsumeBookingOtp(passengerEmail, otp);
+          if (!otpRow) return { error: "Invalid or expired verification code. Please request a new one." };
+          effectiveUserId = guestUserId();
+          effectiveEmail = passengerEmail;
+          bookingRef = guestBookingRef();
+        } else {
+          effectiveUserId = userId;
+          effectiveEmail = userEmail;
+          bookingRef = `BK-${Date.now()}-${randomUUID().slice(0, 8)}`;
+        }
+
+        const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
 
         let session: Awaited<ReturnType<typeof import("stripe")["default"]["prototype"]["checkout"]["sessions"]["create"]>>;
         try {
@@ -290,8 +258,8 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
               }],
               success_url: `${process.env.NEXTAUTH_URL}/booking/success?session_id={CHECKOUT_SESSION_ID}`,
               cancel_url: `${process.env.NEXTAUTH_URL}/chat`,
-              customer_email: userEmail,
-              metadata: { bookingRef, userId, flightId, seatNumber, passengerName },
+              customer_email: effectiveEmail,
+              metadata: { bookingRef, userId: effectiveUserId, flightId, seatNumber, passengerName },
               expires_at: Math.floor(expiresAt.getTime() / 1000),
             })
           );
@@ -301,12 +269,12 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         }
 
         await createPendingBooking({
-          userId,
+          userId: effectiveUserId,
           bookingRef,
           flightId,
           passengerName,
           seat: seatNumber,
-          email: userEmail,
+          email: effectiveEmail,
           stripeSessionId: session.id,
           expiresAt,
         });
@@ -334,7 +302,7 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
   }
   return {
     send_booking_otp:       tools.send_booking_otp,
-    book_flight:            tools.book_flight,
+    create_checkout:        tools.create_checkout,
     get_guest_booking:      tools.get_guest_booking,
     request_otp:            tools.request_otp,
     verify_and_cancel:      tools.verify_and_cancel,

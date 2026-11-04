@@ -119,7 +119,7 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
           };
           const toolName = tool.toolName ?? (tool.type.startsWith("tool-") ? tool.type.slice(5) : "");
 
-          if (toolName === "get_flight_seats" && tool.state === "output-available") {
+          if (toolName === "get_flight_seats" && (tool.state === "output-available" || tool.state === "result")) {
             let seats: unknown[] = [];
             if (Array.isArray(tool.output)) {
               seats = tool.output;
@@ -137,7 +137,7 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
             );
           }
 
-          if (toolName === "search_flights" && tool.state === "output-available") {
+          if (toolName === "search_flights" && (tool.state === "output-available" || tool.state === "result")) {
             let flights: unknown[] = [];
             if (Array.isArray(tool.output)) {
               flights = tool.output;
@@ -156,7 +156,7 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
             }
           }
 
-          if (toolName === "create_checkout" && tool.state === "output-available") {
+          if (toolName === "create_checkout" && (tool.state === "output-available" || tool.state === "result")) {
             const output = tool.output as {
               checkoutUrl?: string;
               bookingRef?: string;

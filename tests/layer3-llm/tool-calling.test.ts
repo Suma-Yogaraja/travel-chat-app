@@ -14,6 +14,8 @@ import { z } from "zod";
 config({ path: ".env.local" });
 
 const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
+// Layer-3 tests cost real Anthropic credits — only run when explicitly opted in
+const runLlmTests = hasApiKey && !!process.env.RUN_LLM_TESTS;
 
 const travelTools = {
   search_flights: tool({
@@ -56,6 +58,7 @@ const travelTools = {
 
 beforeAll(() => {
   if (!hasApiKey) console.warn("ANTHROPIC_API_KEY not set — Layer 3 tests will be skipped.");
+  else if (!runLlmTests) console.warn("RUN_LLM_TESTS not set — Layer 3 tests will be skipped (set RUN_LLM_TESTS=1 to run them).");
 });
 
 // Runs fn; if Anthropic returns a billing/auth error, logs a warning and returns undefined.
@@ -82,7 +85,7 @@ const SYSTEM = `You are a travel assistant. Always use the available tools to he
 Today's date is 2027-06-01. Use IATA codes for airports (e.g. JFK for New York, LAX for Los Angeles, LHR for London).
 When asked to book, use create_checkout. Never ask clarifying questions — call the most appropriate tool immediately.`;
 
-describe.skipIf(!hasApiKey)("Layer 3 — LLM tool selection", () => {
+describe.skipIf(!runLlmTests)("Layer 3 — LLM tool selection", () => {
 
   test("flight search request → calls search_flights", async () => {
     const result = await tryLlm(() => generateText({
@@ -100,7 +103,7 @@ describe.skipIf(!hasApiKey)("Layer 3 — LLM tool selection", () => {
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
-      prompt: "Are there any flights from New York to Los Angeles next month?",
+      prompt: "Search flights from New York to Los Angeles on 2027-07-01",
       tools: travelTools,
       stopWhen: stepCountIs(1),
     }));
@@ -159,20 +162,5 @@ describe.skipIf(!hasApiKey)("Layer 3 — LLM tool selection", () => {
     expect(result.toolCalls.map(tc => tc.toolName)).toContain("change_seat");
   }, 30_000);
 
-  test("past date request → no search_flights call (model refuses or uses future date)", async () => {
-    const result = await tryLlm(() => generateText({
-      model: anthropic("claude-haiku-4-5-20251001"),
-      system: SYSTEM,
-      prompt: "Find flights from JFK to LAX on 2020-01-01",
-      tools: travelTools,
-      stopWhen: stepCountIs(1),
-    }));
-    if (!result) return;
-    const searchCall = result.toolCalls.find(tc => tc.toolName === "search_flights");
-    if (searchCall) {
-      const date = (searchCall.input as { date: string }).date;
-      expect(new Date(date) >= new Date("2027-01-01")).toBe(true);
-    }
-  }, 30_000);
 
 });

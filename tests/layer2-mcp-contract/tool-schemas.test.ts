@@ -82,11 +82,12 @@ describe("tool list by user type", () => {
     const tools = createTravelTools(undefined);
     const keys = Object.keys(tools);
     expect(keys).toContain("send_booking_otp");
-    expect(keys).toContain("book_flight");
+    expect(keys).toContain("create_checkout");
     expect(keys).toContain("get_guest_booking");
     expect(keys).toContain("request_otp");
     expect(keys).toContain("verify_and_cancel");
     expect(keys).toContain("verify_and_change_seat");
+    expect(keys).not.toContain("book_flight");
     expect(keys).not.toContain("get_booking");
     expect(keys).not.toContain("change_seat");
   });
