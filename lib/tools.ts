@@ -1,19 +1,17 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { randomUUID } from "crypto";
-import { getProvider } from "./flight-provider/index";
+import { randomUUID, randomInt } from "crypto";
+import type Stripe from "stripe";
 import {
   getBookingByRef, updateBookingSeat,
   getBookingByRefOnly, cancelBookingByRef, updateBookingSeatByRef,
-  saveBooking, saveGuestOtp, getValidOtp, markOtpUsed,
-  saveBookingVerificationOtp, getValidBookingOtp, createPendingBooking,
+  saveBooking, saveGuestOtp, verifyAndConsumeOtp,
+  saveBookingVerificationOtp, verifyAndConsumeBookingOtp, createPendingBooking,
 } from "./db/queries";
 import {
   sendBookingConfirmation, sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
 } from "./email";
 import { withStripe } from "./stripe";
-
-const provider = getProvider();
 
 function guestBookingRef() {
   return `GS-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -21,8 +19,9 @@ function guestBookingRef() {
 function guestUserId() {
   return `gs-${randomUUID().slice(0, 12)}`;
 }
+// crypto.randomInt is cryptographically secure — Math.random() is not
 function generateOtp() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
 // search_flights and get_flight_seats are served via the MCP server (lib/mcp-bridge.ts).
@@ -39,8 +38,12 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         if (userId) return { error: "Not needed for signed-in users." };
         const otp = generateOtp();
         await saveBookingVerificationOtp(email, otp);
-        await sendOtpEmail({ to: email, otp })
-          .catch(err => console.error("[send_booking_otp] email error:", err));
+        try {
+          await sendOtpEmail({ to: email, otp });
+        } catch (err) {
+          console.error("[send_booking_otp] email error:", err);
+          return { error: "Failed to send verification email. Please try again." };
+        }
         return { sent: true };
       },
     }),
@@ -55,22 +58,19 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         otp:            z.string().length(6).optional().describe("Required for guest bookings — 6-digit code sent to email"),
       }),
       execute: async ({ flightId, passengerName, seatNumber, passengerEmail, otp }) => {
-        // Validate seat availability via mock provider
-        const providerResult = await provider.bookFlight({ flightId, passengerName, seatNumber });
-
+        // book_flight is only in the guest tool set — authenticated users use create_checkout
         if (!userId) {
-          // Guest booking — verify email ownership via OTP
           if (!passengerEmail) {
             return { error: "Please provide your email address so we can send your booking confirmation." };
           }
           if (!otp) {
             return { error: "Please provide the 6-digit verification code sent to your email." };
           }
-          const otpRow = await getValidBookingOtp(passengerEmail, otp);
+          // Atomic verify + consume — prevents double-booking from concurrent requests
+          const otpRow = await verifyAndConsumeBookingOtp(passengerEmail, otp);
           if (!otpRow) {
             return { error: "Invalid or expired verification code. Please request a new one." };
           }
-          await markOtpUsed(otpRow.id);
 
           const bookingRef = guestBookingRef();
           const gsUserId = guestUserId();
@@ -95,8 +95,7 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
           return { bookingId: bookingRef, flightId, passengerName, seat: seatNumber, status: "confirmed" };
         }
 
-        // Authenticated — onStepFinish in route.ts handles DB save and email
-        return providerResult;
+        return { error: "Signed-in users should use create_checkout to pay for bookings." };
       },
     }),
 
@@ -183,8 +182,12 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         const otp = generateOtp();
         await saveGuestOtp(bookingRef, otp);
 
-        await sendOtpEmail({ to: booking.email, bookingRef, otp })
-          .catch(err => console.error("[request_otp] email error:", err));
+        try {
+          await sendOtpEmail({ to: booking.email, bookingRef, otp });
+        } catch (err) {
+          console.error("[request_otp] email error:", err);
+          return { error: "Failed to send verification email. Please try again." };
+        }
 
         return { sent: true, message: "OTP sent to the email on file for this booking. It expires in 10 minutes." };
       },
@@ -197,7 +200,8 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         otp:        z.string().describe("6-digit OTP from email"),
       }),
       execute: async ({ bookingRef, otp }) => {
-        const otpRow = await getValidOtp(bookingRef, otp);
+        // Atomic verify + consume — single UPDATE prevents double-use
+        const otpRow = await verifyAndConsumeOtp(bookingRef, otp);
         if (!otpRow) return { error: "Invalid or expired OTP. Request a new one." };
 
         const booking = await getBookingByRefOnly(bookingRef);
@@ -205,7 +209,6 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         if (booking.status === "cancelled") return { error: "This booking is already cancelled" };
 
         await cancelBookingByRef(bookingRef);
-        await markOtpUsed(otpRow.id);
 
         if (booking.email) {
           sendCancellationConfirmation({
@@ -229,7 +232,8 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         otp:        z.string().describe("6-digit OTP from email"),
       }),
       execute: async ({ bookingRef, newSeat, otp }) => {
-        const otpRow = await getValidOtp(bookingRef, otp);
+        // Atomic verify + consume — single UPDATE prevents double-use
+        const otpRow = await verifyAndConsumeOtp(bookingRef, otp);
         if (!otpRow) return { error: "Invalid or expired OTP. Request a new one." };
 
         const booking = await getBookingByRefOnly(bookingRef);
@@ -237,7 +241,6 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         if (booking.status === "cancelled") return { error: "This booking is already cancelled" };
 
         const updated = await updateBookingSeatByRef(bookingRef, newSeat);
-        await markOtpUsed(otpRow.id);
 
         if (booking.email) {
           sendSeatChangeConfirmation({

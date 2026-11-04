@@ -164,49 +164,43 @@ export async function saveGuestOtp(bookingRef: string, otp: string) {
   await db.insert(guestOtps).values({ id, bookingRef, otp: hashOtp(otp), expiresAt });
 }
 
-export async function getValidOtp(bookingRef: string, otp: string) {
-  const now = new Date();
-  const [row] = await db
-    .select()
-    .from(guestOtps)
-    .where(
-      and(
-        eq(guestOtps.bookingRef, bookingRef),
-        eq(guestOtps.otp, hashOtp(otp)),
-        gt(guestOtps.expiresAt, now),
-        isNull(guestOtps.usedAt)
-      )
-    );
-  return row ?? null;
-}
-
-export async function markOtpUsed(id: string) {
-  await db
-    .update(guestOtps)
-    .set({ usedAt: new Date() })
-    .where(eq(guestOtps.id, id));
-}
-
 export async function saveBookingVerificationOtp(email: string, otp: string) {
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   await db.insert(guestOtps).values({ id, email, purpose: "booking", otp: hashOtp(otp), expiresAt });
 }
 
-export async function getValidBookingOtp(email: string, otp: string) {
+// Atomic verify + consume for seat-change/cancel OTPs (keyed by bookingRef).
+// Single UPDATE avoids the race condition of a separate SELECT then UPDATE.
+export async function verifyAndConsumeOtp(bookingRef: string, otp: string) {
   const now = new Date();
   const [row] = await db
-    .select()
-    .from(guestOtps)
-    .where(
-      and(
-        eq(guestOtps.email, email),
-        eq(guestOtps.purpose, "booking"),
-        eq(guestOtps.otp, hashOtp(otp)),
-        gt(guestOtps.expiresAt, now),
-        isNull(guestOtps.usedAt)
-      )
-    );
+    .update(guestOtps)
+    .set({ usedAt: now })
+    .where(and(
+      eq(guestOtps.bookingRef, bookingRef),
+      eq(guestOtps.otp, hashOtp(otp)),
+      gt(guestOtps.expiresAt, now),
+      isNull(guestOtps.usedAt)
+    ))
+    .returning();
+  return row ?? null;
+}
+
+// Atomic verify + consume for booking OTPs (keyed by email).
+export async function verifyAndConsumeBookingOtp(email: string, otp: string) {
+  const now = new Date();
+  const [row] = await db
+    .update(guestOtps)
+    .set({ usedAt: now })
+    .where(and(
+      eq(guestOtps.email, email),
+      eq(guestOtps.purpose, "booking"),
+      eq(guestOtps.otp, hashOtp(otp)),
+      gt(guestOtps.expiresAt, now),
+      isNull(guestOtps.usedAt)
+    ))
+    .returning();
   return row ?? null;
 }
 
