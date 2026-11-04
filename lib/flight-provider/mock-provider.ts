@@ -46,7 +46,7 @@ export class MockProvider implements FlightProvider {
   // Instance-level so each new MockProvider() (e.g. in tests) starts clean
   private bookings = new Map<string, Booking>();
   private bookingCounter = 0;
-  searchFlights({ origin, destination, date }: { origin: string; destination: string; date: string }): Flight[] {
+  async searchFlights({ origin, destination }: { origin: string; destination: string; date: string }): Promise<Flight[]> {
     return FLIGHTS.filter(
       f =>
         f.origin.toUpperCase() === origin.toUpperCase() &&
@@ -54,13 +54,13 @@ export class MockProvider implements FlightProvider {
     );
   }
 
-  getFlightSeats(flightId: string): Seat[] {
+  async getFlightSeats(flightId: string): Promise<Seat[]> {
     const flight = FLIGHTS.find(f => f.id === flightId);
     if (!flight) throw new Error(`Flight ${flightId} not found`);
     return buildSeatMap(flightId);
   }
 
-  bookFlight({ flightId, passengerName, seatNumber }: { flightId: string; passengerName: string; seatNumber: string }): Booking {
+  async bookFlight({ flightId, passengerName, seatNumber }: { flightId: string; passengerName: string; seatNumber: string }): Promise<Booking> {
     const flight = FLIGHTS.find(f => f.id === flightId);
     if (!flight) throw new Error(`Flight ${flightId} not found`);
 
@@ -91,13 +91,13 @@ export class MockProvider implements FlightProvider {
     return booking;
   }
 
-  getBooking(bookingId: string): Booking {
+  async getBooking(bookingId: string): Promise<Booking> {
     const booking = this.bookings.get(bookingId);
     if (!booking) throw new Error(`Booking ${bookingId} not found`);
     return booking;
   }
 
-  changeSeat({ bookingId, newSeat }: { bookingId: string; newSeat: string }): Booking {
+  async changeSeat({ bookingId, newSeat }: { bookingId: string; newSeat: string }): Promise<Booking> {
     const booking = this.bookings.get(bookingId);
     if (!booking) throw new Error(`Booking ${bookingId} not found`);
 

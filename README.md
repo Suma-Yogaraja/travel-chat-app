@@ -1,16 +1,22 @@
 # TravelChat
 
-A chat-based travel app where users search for flights, book tickets, and manage seats through conversation with Claude.
+[![CI](https://github.com/Suma-Yogaraja/travel-chat-app/actions/workflows/ci.yml/badge.svg)](https://github.com/Suma-Yogaraja/travel-chat-app/actions/workflows/ci.yml)
 
-Built as a learning project to understand core AI engineering concepts: MCP servers, LLM tool calling, streaming, hooks, skills as `.md` files, and CLAUDE.md layering.
+**Live demo → [travel-chat-app-wine.vercel.app](https://travel-chat-app-wine.vercel.app)**
+
+A chat-based travel app where users search for flights, book tickets, and manage seats through conversation with an AI assistant.
+
+Built as a learning project to understand core AI engineering concepts: MCP servers, LLM tool calling, streaming, hooks, skills as `.md` files, real flight APIs, and Stripe payments.
 
 ## What it does
 
-- **Search flights** — ask in natural language, Claude calls the search tool automatically
-- **Book tickets** — Claude handles the booking flow through conversation
+- **Search flights** — ask in natural language, the AI calls the search tool automatically
+- **View seat maps** — interactive seat picker rendered directly in the chat
+- **Book tickets (guests)** — email OTP verification before booking to prove inbox ownership
+- **Pay for flights (authenticated)** — Stripe Checkout flow; webhook confirms payment before booking is saved
 - **Change seats** — update your seat on any existing booking
 - **Cancel bookings** — cancel from the My Bookings page
-- **Guest mode** — chat without signing in; email OTP required before booking
+- **Guest mode** — chat without signing in; bookings saved with a GS- reference
 - **Authenticated mode** — sign in with GitHub, Google, or email/password to save and resume conversations
 
 ## Tech stack
@@ -19,74 +25,132 @@ Built as a learning project to understand core AI engineering concepts: MCP serv
 |---|---|
 | Framework | Next.js 16 App Router |
 | AI | Vercel AI SDK v7 |
-| Model | Claude Haiku (`claude-haiku-4-5-20251001`) |
+| Model | Groq `openai/gpt-oss-120b` (swap to Claude Haiku in `app/api/chat/route.ts`) |
 | MCP | `@modelcontextprotocol/sdk` (InMemoryTransport) |
 | Auth | NextAuth v5 — GitHub OAuth, Google OAuth, Credentials |
 | Database | Neon Postgres |
 | ORM | Drizzle ORM |
+| Flight data | Duffel API (sandbox) — fallback to mock via `FLIGHT_PROVIDER=mock` |
+| Payments | Stripe Checkout (hosted page) + webhooks |
 | Email | Nodemailer + Gmail |
-| Styling | Tailwind CSS |
-| Testing | Vitest (29 tests across 3 layers) |
+| Observability | Langfuse (`@langfuse/vercel-ai-sdk` + `@langfuse/otel`) |
+| Styling | Tailwind CSS v4 |
+| Testing | Vitest (27 tests across 3 layers) |
+
+## Architecture
+
+```mermaid
+graph LR
+    U([Browser]) -->|chat + SSE stream| R[app/api/chat\nVercel AI SDK v7]
+    R -->|tool calls| M[MCP Server\nsearch_flights\nget_flight_seats]
+    R -->|tool calls| T[lib/tools.ts\ncreate_checkout\nget_booking\nchange_seat]
+    M --> D[Duffel API\nReal flight data]
+    T --> S[Stripe Checkout\n+ Webhooks]
+    T --> DB[(Neon Postgres\nDrizzle ORM)]
+    S -->|confirmed| DB
+    R --> L[Langfuse\nOTel traces]
+```
+
+## Example conversation (authenticated user)
+
+> **You:** Find me flights from London to New York next Friday
+>
+> *[AI calls `search_flights` → flight cards appear]*
+>
+> **You:** I'll take the second one. Show me the seats.
+>
+> *[AI calls `get_flight_seats` → seat map appears]*
+>
+> **You:** Book seat 12A for Sarah Connor
+>
+> **Assistant:** Just to confirm — Flight LHR→JFK, seat 12A, Sarah Connor, $412. Shall I proceed?
+>
+> **You:** Yes
+>
+> *[AI calls `create_checkout` → Pay button appears in chat]*
+>
+> **Assistant:** Click Pay to complete your booking securely via Stripe. Your reference is BK-1234567890-ab.
+>
+> *[User clicks Pay → Stripe checkout → test card → redirected to /booking/success → confirmed]*
 
 ## Key concepts demonstrated
 
 - **MCP server** (`mcp-server/`) — custom server exposing travel tools; connected in-process via `InMemoryTransport` (no subprocess)
-- **Tool calling** — Claude decides when to call `search_flights`, `book_flight`, etc. based on the conversation
+- **Tool calling** — AI decides when to call `search_flights`, `create_checkout`, etc. based on the conversation
+- **Role-based tools** — guests get OTP + booking tools; authenticated users get `create_checkout`, `get_booking`, `change_seat`
 - **Streaming** — responses stream token by token via `streamText` + `toUIMessageStreamResponse`
-- **Hooks** — `onStepFinish` logs every tool call + saves bookings, `onFinish` saves the response to DB
-- **Skills as `.md` files** — `skills/` folder loaded into the system prompt; Anthropic prompt caching keeps token cost low
+- **Skills as `.md` files** — `skills/` folder loaded into the system prompt; rules for search, booking, and seat management
+- **Adapter pattern** — swap mock flight data for Duffel (or any real API) via `FLIGHT_PROVIDER` env var, zero code changes
+- **Stripe webhooks as source of truth** — booking is only confirmed when the `checkout.session.completed` webhook fires, never on browser redirect
+- **Circuit breaker** — `lib/stripe.ts` opens after 3 consecutive Stripe failures, auto-recovers after 60s
+- **Fallback seat map** — when Duffel returns no seatmap (sandbox limitation), a deterministic layout is generated from the flight ID
 - **Global API handler** — `lib/api-handler.ts` wraps every route; consistent error format, centralised logging
-- **LLM observability** — `@langfuse/vercel-ai-sdk` + `@langfuse/otel` (Langfuse v5 stack); `registerTelemetry()` hooks into AI SDK v7's callback system, `LangfuseSpanProcessor` exports OTel spans to Langfuse — captures tool traces, token costs, latency per conversation
+- **LLM observability** — Langfuse v5 stack captures tool traces, token costs, and latency per conversation
 - **JSONB message storage** — full `UIMessage` objects stored in Postgres so tool call history survives refresh
-- **Adapter pattern** — swap mock flight data for a real API via `FLIGHT_PROVIDER` env var, zero code changes
 
 ## Project structure
 
 ```
 travel-chat-app/
-├── CLAUDE.md                        # Architecture rules for Claude
+├── CLAUDE.md                        # Architecture rules for Claude Code
 ├── mcp-server/
 │   ├── CLAUDE.md                    # MCP-specific rules
-│   └── index.ts                     # search_flights, get_flight_seats, book_flight, get_booking, change_seat
+│   └── index.ts                     # search_flights, get_flight_seats (+ fallback seat map)
 ├── skills/
 │   ├── flight-search.md             # Rules: when to call search, date validation
-│   ├── booking.md                   # Rules: confirmation flow, guest OTP gate
+│   ├── booking.md                   # Rules: Stripe flow (auth), OTP flow (guest)
 │   └── seat-management.md           # Rules: seat maps, guest OTP for changes
 ├── lib/
 │   ├── api-handler.ts               # Global error handler HOF + AppError class
 │   ├── auth.ts                      # NextAuth config (GitHub + Google + Credentials)
 │   ├── email.ts                     # Nodemailer helpers (booking confirm, OTP, reset)
-│   ├── password.ts                  # Shared password validation rules
+│   ├── stripe.ts                    # Stripe client singleton + circuit breaker + live key guard
 │   ├── rate-limit.ts                # Sliding-window rate limiter (20 req/min per IP)
-│   ├── tools.ts                     # Session-aware direct tools (book, change_seat, OTP)
+│   ├── tools.ts                     # Session-aware tools: create_checkout (auth), book_flight + OTP (guest)
 │   ├── mcp-bridge.ts                # Connects MCP server in-process
-│   ├── ai-hooks.ts                  # Logging hook for tool calls
-│   ├── langfuse-processor.ts        # Singleton LangfuseSpanProcessor (shared by instrumentation + chat route)
+│   ├── langfuse-processor.ts        # Singleton LangfuseSpanProcessor
 │   ├── db/
 │   │   ├── schema.ts                # Drizzle table definitions
 │   │   ├── queries.ts               # Typed DB helpers
 │   │   └── index.ts                 # Drizzle client
-│   └── flight-provider/             # FlightProvider interface + mock implementation
+│   └── flight-provider/
+│       ├── index.ts                 # FlightProvider interface + factory
+│       ├── duffel-provider.ts       # Duffel API implementation (active)
+│       └── mock-provider.ts         # Hardcoded mock data (fallback)
 ├── app/
-│   ├── global-error.tsx             # React error boundary (whole-app crash fallback)
-│   ├── page.tsx                     # Landing page
-│   ├── login/page.tsx               # GitHub / Google / email+password sign in
-│   ├── register/page.tsx            # Email+password registration
-│   ├── forgot-password/page.tsx     # Request password reset email
-│   ├── reset-password/page.tsx      # Set new password from reset link
 │   ├── api/
 │   │   ├── chat/route.ts            # Main AI streaming route
-│   │   └── conversations/           # CRUD for saved conversations
+│   │   └── stripe/
+│   │       ├── webhook/route.ts     # Stripe webhook — confirms/expires bookings
+│   │       └── status/route.ts      # Polling endpoint for success page
+│   ├── booking/
+│   │   └── success/page.tsx         # Payment confirmation page (polls status)
 │   ├── chat/
 │   │   ├── [id]/page.tsx            # Authenticated conversation
 │   │   ├── guest/page.tsx           # Guest mode
-│   │   └── bookings/                # My Bookings page + cancel server action
-│   └── components/
+│   │   └── bookings/                # My Bookings page
+│   ├── login/ register/ forgot-password/ reset-password/
+│   └── global-error.tsx
+├── components/
+│   └── chat/
+│       ├── pay-button.tsx           # Pay button card rendered on create_checkout output
+│       ├── seat-map.tsx             # Interactive seat picker
+│       └── flight-results.tsx       # Flight cards
 └── tests/
     ├── layer1-tool-logic/           # Unit tests — provider logic, password validation (20 tests)
     ├── layer2-mcp-contract/         # MCP contract tests — tool schemas, guest vs auth tools (7 tests)
-    └── layer3-llm/                  # LLM integration tests — Claude calls the right tool (2 tests, needs API key)
+    └── layer3-llm/                  # LLM integration tests (2 tests — require ANTHROPIC_API_KEY)
 ```
+
+## What's real vs mocked
+
+| Feature | In sandbox | In production |
+|---|---|---|
+| Flight search | Real (Duffel sandbox) | Real |
+| Seat maps | Real for Duffel Airways + AA test flights; generated fallback for others | Real for all airlines |
+| Payments | Stripe test mode (no real charges) | Stripe live mode |
+| Email | Real (Gmail SMTP) | Real |
+| Auth | Real (GitHub/Google OAuth) | Real |
 
 ## Getting started
 
@@ -103,14 +167,17 @@ cp .env.local.example .env.local
 ```
 
 Fill in:
-- `ANTHROPIC_API_KEY` — from [console.anthropic.com](https://console.anthropic.com)
+- `GROQ_API_KEY` — from [console.groq.com](https://console.groq.com) (free tier)
 - `DATABASE_URL` — Neon Postgres connection string from [neon.tech](https://neon.tech)
 - `NEXTAUTH_SECRET` — run `openssl rand -base64 32`
 - `NEXTAUTH_URL` — `http://localhost:3002` in development
 - `GITHUB_ID` + `GITHUB_SECRET` — GitHub OAuth app, callback: `http://localhost:3002/api/auth/callback/github`
 - `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` — Google OAuth app, callback: `http://localhost:3002/api/auth/callback/google`
-- `GMAIL_USER` + `GMAIL_APP_PASSWORD` — Gmail account for sending OTP and booking confirmation emails
-- `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_BASEURL` — from [cloud.langfuse.com](https://cloud.langfuse.com) (free tier); US region: `https://us.cloud.langfuse.com`
+- `GMAIL_USER` + `GMAIL_APP_PASSWORD` — Gmail account for OTP and booking confirmation emails
+- `DUFFEL_API_KEY` — from [duffel.com](https://duffel.com) (free sandbox, token starts with `duffel_test_...`)
+- `FLIGHT_PROVIDER` — `duffel` for real data, `mock` for local dev without a Duffel account
+- `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` — from [dashboard.stripe.com](https://dashboard.stripe.com) (test keys)
+- `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_BASEURL` — from [cloud.langfuse.com](https://cloud.langfuse.com) (free tier)
 
 ### 3. Push the database schema
 
@@ -126,24 +193,46 @@ npm run dev
 
 Open [http://localhost:3002](http://localhost:3002).
 
-### 5. Run tests
+### 5. (Optional) Test Stripe webhooks locally
+
+Install the Stripe CLI, then:
+
+```bash
+stripe listen --forward-to localhost:3002/api/stripe/webhook
+```
+
+Copy the printed `whsec_...` key into `STRIPE_WEBHOOK_SECRET`.
+
+### 6. Run tests
 
 ```bash
 npx vitest run
 ```
 
-Layer 3 (LLM) tests run automatically when `ANTHROPIC_API_KEY` is set; they skip gracefully otherwise.
+Layer 3 (LLM) tests require `ANTHROPIC_API_KEY` and are skipped gracefully otherwise.
 
 ## How it works
 
-**Guest mode** (`/chat/guest`) — messages live in React state only. Refresh = start over. Email OTP verification required before booking to prove inbox ownership.
+**Guest mode** (`/chat/guest`) — messages live in React state only. Refresh = start over. Email OTP verification required before booking.
 
-**Authenticated mode** (`/chat/[id]`) — each message is saved to Postgres as a full `UIMessage` JSONB object. On page load, messages are fetched from the DB and restored into the chat. This preserves tool call history so conversations truly resume.
+**Authenticated mode** (`/chat/[id]`) — each message saved to Postgres as a full `UIMessage` JSONB object. Conversations truly resume because tool call history is preserved.
 
-**MCP tools** — the MCP server runs in-process via `InMemoryTransport` (no subprocess, no stdio). Claude automatically decides which tool to call based on the conversation.
+**Payments** — authenticated users go through Stripe Checkout. Claude calls `create_checkout`, a Pay button appears in the chat. After payment, the Stripe webhook confirms the booking in the DB and sends a confirmation email. Guests skip payment entirely.
 
-## Flight data
+**Flight data** — Duffel sandbox is active by default (`FLIGHT_PROVIDER=duffel`). Most airlines in sandbox don't return seatmap data — the app generates a deterministic fallback layout so the seat picker always works. Set `FLIGHT_PROVIDER=mock` for offline development.
 
-Uses mock data by default (`FLIGHT_PROVIDER=mock`). Available routes: JFK↔LAX, JFK↔ORD, JFK↔MIA, SFO↔JFK.
+## Switching back to Claude
 
-To swap in a real API, set `FLIGHT_PROVIDER=amadeus` and implement `lib/flight-provider/amadeus-provider.ts`.
+Change one line in `app/api/chat/route.ts`:
+
+```ts
+// From:
+import { groq } from "@ai-sdk/groq";
+model: groq("openai/gpt-oss-120b")
+
+// To:
+import { anthropic } from "@ai-sdk/anthropic";
+model: anthropic("claude-haiku-4-5-20251001")
+```
+
+Claude follows skill instructions more reliably than Groq and supports prompt caching.

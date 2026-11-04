@@ -5,12 +5,13 @@ A chat-based travel app where users search flights, book tickets, and change sea
 
 ## Architecture
 - **MCP server** (`mcp-server/`) exposes 5 travel tools. The app connects via `InMemoryTransport` (see `lib/mcp-bridge.ts`) — no subprocess, no stdio. `mcp-server/main()` is still exported for standalone use with Claude Desktop.
-- **Tool split**: `search_flights` + `get_flight_seats` come from the MCP server via `lib/mcp-bridge.ts`. All write/session-aware tools (`book_flight`, `get_booking`, `change_seat`, OTP tools) are direct tools in `lib/tools.ts`.
+- **Tool split**: `search_flights` + `get_flight_seats` come from the MCP server via `lib/mcp-bridge.ts`. Session-aware tools are in `lib/tools.ts` — `create_checkout` (auth), `get_booking`, `change_seat`, OTP tools + `book_flight` (guests only).
 - **Flight data** comes from `lib/flight-provider/` — always use `getProvider()`, never import mock-provider directly.
-- **Skills** in `skills/` are `.md` files loaded once at module level (not per-request) and composed into the system prompt with Anthropic prompt caching.
+- **Skills** in `skills/` are `.md` files loaded once at module level (not per-request) and composed into the system prompt.
 - **Dual mode**: Guest (`/chat/guest`) = in-memory React state, no DB. Authenticated (`/chat/[id]`) = Postgres-persisted.
 - **Auth** via NextAuth v5 — GitHub OAuth, Google OAuth, Email/Password (Credentials). Session available via `auth()` in server components and API routes.
 - **Email** via Nodemailer + Gmail. Requires `GMAIL_USER` and `GMAIL_APP_PASSWORD` in `.env.local`.
+- **Payments** via Stripe Checkout (hosted page). Auth users go through Stripe; guests use OTP + direct booking.
 
 ## Conventions
 - All MCP tool inputs must use Zod schemas.
@@ -22,9 +23,10 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - Skills are loaded at module level in `app/api/chat/route.ts` — do not move them inside the request handler.
 
 ## Key files
-- `mcp-server/index.ts` — 5 MCP tools, exports `createTravelMcpServer()` and `main()`
+- `mcp-server/index.ts` — 5 MCP tools, exports `createTravelMcpServer()` and `main()`. `get_flight_seats` falls back to a generated seat map if provider returns 0 seats.
 - `lib/mcp-bridge.ts` — connects MCP server in-memory, returns AI SDK-compatible tools
-- `lib/tools.ts` — session-aware direct tools (book, get_booking, change_seat, OTP)
+- `lib/tools.ts` — session-aware direct tools: `create_checkout` (auth), `book_flight` + OTP tools (guest), `get_booking`, `change_seat`
+- `lib/stripe.ts` — Stripe client singleton, circuit breaker (3 failures → 60s open), live key guard
 - `lib/rate-limit.ts` — sliding-window rate limiter (20 req/min per IP, in-memory per process)
 - `lib/flight-provider/index.ts` — FlightProvider interface + factory
 - `lib/db/schema.ts` — Drizzle table definitions
@@ -32,24 +34,36 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - `lib/auth.ts` — NextAuth config
 - `lib/email.ts` — Nodemailer email functions (booking confirm, seat change, cancel, OTP)
 - `app/api/chat/route.ts` — main AI streaming route
+- `app/api/stripe/webhook/route.ts` — verifies Stripe signature, confirms/expires bookings (source of truth)
+- `app/api/stripe/status/route.ts` — polling endpoint for success page
+- `app/booking/success/page.tsx` — polls every 2s until payment confirmed
+- `components/chat/pay-button.tsx` — Pay button card rendered in chat on `create_checkout` output
 - `lib/langfuse-processor.ts` — singleton LangfuseSpanProcessor shared by instrumentation + chat route
 - `instrumentation.ts` — registers OTel pipeline + AI SDK telemetry integration on startup
 - `skills/` — Claude's travel assistant behaviour rules
 
+## Model
+Currently using **Groq** (`openai/gpt-oss-120b`) via `@ai-sdk/groq` — free tier, no Anthropic credits needed.
+To switch back to Claude Haiku (more reliable tool calling): swap import to `@ai-sdk/anthropic` and model to `anthropic("claude-haiku-4-5-20251001")` in `app/api/chat/route.ts`, and restore the `cacheControl` prompt caching pattern.
+
 ## Cost optimisations in place
-- Model: `claude-haiku-4-5-20251001` (~12× cheaper than Sonnet)
-- Prompt caching: system prompt injected as a cached user message with `cacheControl: "ephemeral"`
 - Tool result trimming: old seat map / flight search results replaced with one-line placeholders
-- Role-based tool filtering: guests get 5 tools, auth users get 3 (MCP) + 3 (direct) = 6
+- Role-based tool filtering: guests get 6 tools (OTP + booking flow), auth users get 3 (MCP) + 3 (direct: `create_checkout`, `get_booking`, `change_seat`)
 - History cap: last 30 model messages only
 - Output cap: `maxOutputTokens: 600`, `stopWhen: stepCountIs(4)`
 
 ## Auth providers
+- GitHub OAuth callback URL for production: `https://travel-chat-app-wine.vercel.app/api/auth/callback/github` — update in GitHub Developer settings if the deployment URL changes
+- Google OAuth callback URL for production: `https://travel-chat-app-wine.vercel.app/api/auth/callback/google` — update in Google Cloud Console if URL changes
 - GitHub OAuth, Google OAuth, Email/Password (Credentials) — all configured in `lib/auth.ts`
 - Registration: `POST /api/auth/register` → bcrypt hash → `createUserWithPassword`
 - Forgot password: `POST /api/auth/forgot-password` → token stored as SHA-256 hash in `password_reset_tokens`, email sent via Nodemailer
 - Reset password: `POST /api/auth/reset-password` → verify token hash → `updateUserPassword`
 - Password min 8 chars, bcrypt cost 12
+
+## Environment variables
+- Never edit `.env.local` via Claude Code — the security hook blocks writes to protect secrets. Use VS Code or any system text editor directly.
+- Vercel env vars: add via Vercel dashboard or `vercel env add`. Sensitive keys (API secrets) should be `production` + `preview` only — never commit them.
 
 ## Security model
 - Passwords: bcrypt (cost 12) — never stored in plaintext
@@ -106,5 +120,34 @@ Langfuse's server now only accepts spans via their OTel HTTP endpoint (`/api/pub
 - Token usage, latency, and cost per trace
 - Span hierarchy: `invoke_agent` → `chat` → per-step spans
 
-## Still to do
-- Real Amadeus flight API via `amadeus-provider.ts` (swap via `FLIGHT_PROVIDER` env var)
+## Flight provider
+
+Active: **Duffel** (`FLIGHT_PROVIDER=duffel`) via `lib/flight-provider/duffel-provider.ts`.
+Default fallback: **Mock** (`FLIGHT_PROVIDER=mock`) — hardcoded US routes, always works.
+Archived: `amadeus-provider.ts` — Amadeus shut down their free dev portal July 2025, kept for reference.
+
+**Duffel sandbox notes:**
+- Free account at duffel.com, test token starts with `duffel_test_...`
+- Seatmaps only available for Duffel Airways test flights and American Airlines test data — BA, Iberia, multi-stop flights return 0 seats in sandbox (works in production)
+- When provider returns 0 seats, `mcp-server/index.ts` generates a deterministic fallback layout (20 rows × 6 cols, ~70% available, seeded from flightId)
+- If seatmap cache is cold (server restart), `getFlightSeats` auto re-searches using params encoded in the flight ID (`DF-{ORIGIN}-{DESTINATION}-{DATE}-{INDEX}`)
+- `bookFlight`, `getBooking`, `changeSeat` on the provider throw intentionally — handled by `lib/tools.ts` → Postgres
+
+## Stripe payment
+
+Auth users go through Stripe Checkout (hosted page). Guests use OTP + direct booking (no payment).
+
+**Flow:**
+1. Claude calls `create_checkout` → creates pending booking in DB + Stripe session → returns checkout URL
+2. Chat renders `PayButton` component (detected from `create_checkout` tool output)
+3. User clicks → Stripe hosted checkout → test card `4242 4242 4242 4242`
+4. Stripe fires `checkout.session.completed` webhook → `app/api/stripe/webhook/route.ts` confirms booking in DB and sends confirmation email
+5. Stripe redirects to `/booking/success?session_id=xxx` → page polls `/api/stripe/status` every 2s until `paymentStatus = 'paid'`
+
+**Webhook is the source of truth** — never trust the browser redirect to confirm payment.
+
+**DB fields added to `bookings`:** `stripe_session_id TEXT UNIQUE`, `payment_status TEXT DEFAULT 'paid'`, `expires_at TIMESTAMP`
+
+**Env vars required:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+
+**Local testing:** `stripe listen --forward-to localhost:3002/api/stripe/webhook` (needs Stripe CLI — install binary directly from GitHub if brew fails due to Xcode version)

@@ -1,12 +1,11 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
 import type { UIMessage, ToolSet } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
+import { groq } from "@ai-sdk/groq";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { auth } from "@/lib/auth";
-import { saveMessage, getConversation, updateConversationTitle, saveBooking } from "@/lib/db/queries";
+import { saveMessage, getConversation, updateConversationTitle } from "@/lib/db/queries";
 import { createLoggingHook } from "@/lib/ai-hooks";
-import { sendBookingConfirmation } from "@/lib/email";
 import { createTravelTools } from "@/lib/tools";
 import { connectMcpTools } from "@/lib/mcp-bridge";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -119,87 +118,11 @@ export const POST = apiHandler(async (req: Request) => {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function handleStep(step: any) {
-    // Log tool calls (existing behaviour)
     createLoggingHook()(step);
-
-    // Detect book_flight results and persist immediately per-step.
-    // onStepFinish is confirmed to fire (we see [TOOL CALLED] logs); onFinish is less reliable under streaming.
-    if (!session?.user?.id || !conversationId) return;
-
-    // toolResults already includes staticToolResults — don't spread both or we get duplicates
-    const results = step.toolResults ?? [];
-
-    for (const tr of results) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const typed = tr as any;
-      const toolName: string = typed.toolName ?? "";
-      const output: unknown = typed.output ?? typed.result;
-
-      if (toolName !== "book_flight") continue;
-      const b = output as { bookingId: string; flightId: string; passengerName: string; seat: string };
-      try {
-        await saveBooking({
-          userId: session.user.id,
-          bookingRef: b.bookingId,
-          flightId: b.flightId,
-          passengerName: b.passengerName,
-          seat: b.seat,
-        });
-        console.log("[step] booking saved:", b.bookingId);
-      } catch (err) {
-        console.error("[step] saveBooking error:", err);
-      }
-      if (session.user.email) {
-        await sendBookingConfirmation({
-          to: session.user.email,
-          passengerName: b.passengerName,
-          bookingRef: b.bookingId,
-          flightId: b.flightId,
-          seat: b.seat,
-        }).catch(err => console.error("[step] email error:", err));
-      }
-    }
   }
 
   const systemPrompt = buildSystemPrompt(!session?.user?.id);
-
-  // Prepend system as a cached user message so Anthropic can reuse it across requests.
-  // The CSV showed input_cache_read: $0.00 — no caching at all — because the system:
-  // string param doesn't get a cache_control header. This pattern fixes that:
-  // 2nd+ requests in the same 5-min window pay ~10% of the normal input price for
-  // the system prompt + tool definitions (~3500 tokens).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cachedSystemMessage: any = {
-    role: "user",
-    content: [
-      {
-        type: "text",
-        text: systemPrompt,
-        experimental_providerMetadata: {
-          anthropic: { cacheControl: { type: "ephemeral" } },
-        },
-      },
-    ],
-  };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cachedSystemAck: any = {
-    role: "assistant",
-    content: [{ type: "text", text: "Understood." }],
-  };
-
-  // Inject today's date as a separate uncached message so the cached system prompt
-  // stays stable across days. If today's date were inside the cached block, the
-  // cache would miss at midnight every day for every user.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dateMessage: any = {
-    role: "user",
-    content: [{ type: "text", text: `Today's date is ${new Date().toISOString().slice(0, 10)}. Use this to resolve relative dates like "today", "tomorrow", or "next Friday" into YYYY-MM-DD format.` }],
-  };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dateAck: any = {
-    role: "assistant",
-    content: [{ type: "text", text: "Got it." }],
-  };
+  const systemWithDate = `${systemPrompt}\n\nToday's date is ${new Date().toISOString().slice(0, 10)}. Use this to resolve relative dates like "today", "tomorrow", or "next Friday" into YYYY-MM-DD format.`;
 
   // Connect MCP server in-process — provides search_flights + get_flight_seats
   const { tools: mcpTools, close: closeMcp } = await connectMcpTools();
@@ -207,8 +130,9 @@ export const POST = apiHandler(async (req: Request) => {
   const allTools = { ...mcpTools, ...sessionTools } as unknown as ToolSet;
 
   const result = streamText({
-    model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
-    messages: [cachedSystemMessage, cachedSystemAck, dateMessage, dateAck, ...modelMessages],
+    model: groq("openai/gpt-oss-120b"),
+    system: systemWithDate,
+    messages: modelMessages,
     tools: allTools,
     maxOutputTokens: 600,
     stopWhen: stepCountIs(4),
@@ -239,8 +163,8 @@ export const POST = apiHandler(async (req: Request) => {
             ?.text ?? "";
           const safeText = userText.replace(/"/g, "'").slice(0, 200);
           generateText({
-            model: anthropic("claude-haiku-4-5-20251001"),
-            prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${safeText}". Respond with only the title, no quotes, no punctuation at the end.`,
+            model: groq("openai/gpt-oss-120b"),
+            prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${safeText}". Respond with ONLY the title, no quotes, no punctuation at the end, nothing else.`,
           }).then(({ text: title }) => updateConversationTitle(conversationId, title.trim()))
             .catch(err => console.error("[title] error:", err));
         }

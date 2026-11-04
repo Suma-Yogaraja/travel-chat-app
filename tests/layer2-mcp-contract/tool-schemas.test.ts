@@ -13,8 +13,8 @@ function mcpText(text: string) {
 }
 
 describe("search_flights tool contract", () => {
-  it("returns content array with type=text", () => {
-    const flights = provider.searchFlights({ origin: "JFK", destination: "LAX", date: "2026-11-05" });
+  it("returns content array with type=text", async () => {
+    const flights = await provider.searchFlights({ origin: "JFK", destination: "LAX", date: "2026-11-05" });
     const response = mcpText(JSON.stringify(flights, null, 2));
     expect(response.content[0].type).toBe("text");
     const parsed = JSON.parse(response.content[0].text);
@@ -25,8 +25,8 @@ describe("search_flights tool contract", () => {
 });
 
 describe("get_flight_seats tool contract", () => {
-  it("returns available and taken seat arrays", () => {
-    const seats = provider.getFlightSeats("F1");
+  it("returns available and taken seat arrays", async () => {
+    const seats = await provider.getFlightSeats("F1");
     const available = seats.filter(s => s.available).map(s => `${s.seatNumber}(${s.type})`);
     const taken     = seats.filter(s => !s.available).map(s => s.seatNumber);
     const response  = mcpText(JSON.stringify({ flightId: "F1", available, taken }, null, 2));
@@ -40,8 +40,8 @@ describe("get_flight_seats tool contract", () => {
 });
 
 describe("book_flight tool contract", () => {
-  it("returns a booking object with bookingId", () => {
-    const booking  = provider.bookFlight({ flightId: "F1", passengerName: "Suma", seatNumber: "9A" });
+  it("returns a booking object with bookingId", async () => {
+    const booking  = await provider.bookFlight({ flightId: "F1", passengerName: "Suma", seatNumber: "9A" });
     const response = mcpText(JSON.stringify(booking, null, 2));
 
     expect(response.content[0].type).toBe("text");
@@ -53,9 +53,9 @@ describe("book_flight tool contract", () => {
 });
 
 describe("get_booking tool contract", () => {
-  it("returns booking details for a valid ID", () => {
-    const created  = provider.bookFlight({ flightId: "F2", passengerName: "Suma", seatNumber: "9B" });
-    const booking  = provider.getBooking(created.bookingId);
+  it("returns booking details for a valid ID", async () => {
+    const created  = await provider.bookFlight({ flightId: "F2", passengerName: "Suma", seatNumber: "9B" });
+    const booking  = await provider.getBooking(created.bookingId);
     const response = mcpText(JSON.stringify(booking, null, 2));
 
     expect(response.content[0].type).toBe("text");
@@ -65,9 +65,9 @@ describe("get_booking tool contract", () => {
 });
 
 describe("change_seat tool contract", () => {
-  it("returns updated booking with new seat", () => {
-    const created  = provider.bookFlight({ flightId: "F3", passengerName: "Suma", seatNumber: "9C" });
-    const updated  = provider.changeSeat({ bookingId: created.bookingId, newSeat: "9D" });
+  it("returns updated booking with new seat", async () => {
+    const created  = await provider.bookFlight({ flightId: "F3", passengerName: "Suma", seatNumber: "9C" });
+    const updated  = await provider.changeSeat({ bookingId: created.bookingId, newSeat: "9D" });
     const response = mcpText(JSON.stringify(updated, null, 2));
 
     expect(response.content[0].type).toBe("text");
@@ -91,16 +91,17 @@ describe("tool list by user type", () => {
     expect(keys).not.toContain("change_seat");
   });
 
-  it("auth tools exclude send_booking_otp and guest-only tools", () => {
+  it("auth tools include create_checkout and exclude guest-only tools", () => {
     const tools = createTravelTools("user-123");
     const keys = Object.keys(tools);
+    expect(keys).toContain("create_checkout");
+    expect(keys).toContain("get_booking");
+    expect(keys).toContain("change_seat");
+    expect(keys).not.toContain("book_flight");
     expect(keys).not.toContain("send_booking_otp");
     expect(keys).not.toContain("get_guest_booking");
     expect(keys).not.toContain("request_otp");
     expect(keys).not.toContain("verify_and_cancel");
     expect(keys).not.toContain("verify_and_change_seat");
-    expect(keys).toContain("book_flight");
-    expect(keys).toContain("get_booking");
-    expect(keys).toContain("change_seat");
   });
 });

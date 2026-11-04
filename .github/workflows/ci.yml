@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Type check + tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests (layer 1 + 2)
+        run: npx vitest run --reporter=verbose
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # ANTHROPIC_API_KEY is optional — layer 3 tests skip gracefully without it
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

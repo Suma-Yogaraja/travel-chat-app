@@ -3,6 +3,7 @@
 import type { UIMessage } from "ai";
 import { SeatMap } from "./seat-map";
 import { FlightResults } from "./flight-results";
+import { PayButton } from "./pay-button";
 
 // Inline markdown renderer — no external deps, handles what Claude actually outputs
 function renderInline(text: string): React.ReactNode[] {
@@ -150,6 +151,31 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
                   key={i}
                   flights={flights as Parameters<typeof FlightResults>[0]["flights"]}
                   onSelectFlight={id => onSendMessage?.(`I'd like to book flight ${id}`)}
+                />
+              );
+            }
+          }
+
+          if (toolName === "create_checkout" && tool.state === "output-available") {
+            const output = tool.output as {
+              checkoutUrl?: string;
+              bookingRef?: string;
+              priceUsd?: number;
+              flightId?: string;
+              seatNumber?: string;
+              passengerName?: string;
+              error?: string;
+            };
+            if (output?.checkoutUrl) {
+              return (
+                <PayButton
+                  key={i}
+                  checkoutUrl={output.checkoutUrl}
+                  priceUsd={output.priceUsd ?? 0}
+                  bookingRef={output.bookingRef ?? ""}
+                  flightId={output.flightId ?? ""}
+                  seatNumber={output.seatNumber ?? ""}
+                  passengerName={output.passengerName ?? ""}
                 />
               );
             }

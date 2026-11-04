@@ -6,11 +6,12 @@ import {
   getBookingByRef, updateBookingSeat,
   getBookingByRefOnly, cancelBookingByRef, updateBookingSeatByRef,
   saveBooking, saveGuestOtp, getValidOtp, markOtpUsed,
-  saveBookingVerificationOtp, getValidBookingOtp,
+  saveBookingVerificationOtp, getValidBookingOtp, createPendingBooking,
 } from "./db/queries";
 import {
   sendBookingConfirmation, sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
 } from "./email";
+import { withStripe } from "./stripe";
 
 const provider = getProvider();
 
@@ -252,15 +253,80 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         return { success: true, booking: updated, message: `Seat changed to ${newSeat}. A confirmation has been sent to your email.` };
       },
     }),
+
+    create_checkout: tool({
+      description: "Create a Stripe payment session to book a flight. Use this for authenticated (signed-in) users. Returns a checkout URL — the chat will show a Pay button.",
+      inputSchema: z.object({
+        flightId:      z.string().describe("Flight ID e.g. F1 or DF-JFK-LAX-2026-11-05-0"),
+        passengerName: z.string().describe("Full name of the passenger"),
+        seatNumber:    z.string().describe("Seat number e.g. 12A"),
+        priceUsd:      z.number().positive().describe("Price in USD as shown to the user"),
+      }),
+      execute: async ({ flightId, passengerName, seatNumber, priceUsd }) => {
+        if (!userId) return { error: "Sign in required to pay for a booking." };
+        if (priceUsd <= 0 || priceUsd > 10_000) return { error: "Invalid price." };
+
+        const bookingRef = `BK-${Date.now()}-${randomUUID().slice(0, 8)}`;
+        const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30-min window
+
+        let session: Awaited<ReturnType<typeof import("stripe")["default"]["prototype"]["checkout"]["sessions"]["create"]>>;
+        try {
+          session = await withStripe(stripe =>
+            stripe.checkout.sessions.create({
+              mode: "payment",
+              line_items: [{
+                price_data: {
+                  currency: "usd",
+                  product_data: {
+                    name: `Flight ${flightId} — Seat ${seatNumber}`,
+                    description: `Passenger: ${passengerName}`,
+                  },
+                  unit_amount: Math.round(priceUsd * 100),
+                },
+                quantity: 1,
+              }],
+              success_url: `${process.env.NEXTAUTH_URL}/booking/success?session_id={CHECKOUT_SESSION_ID}`,
+              cancel_url: `${process.env.NEXTAUTH_URL}/chat`,
+              customer_email: userEmail,
+              metadata: { bookingRef, userId, flightId, seatNumber, passengerName },
+              expires_at: Math.floor(expiresAt.getTime() / 1000),
+            })
+          );
+        } catch (err) {
+          console.error("[create_checkout] Stripe error:", err);
+          return { error: "Payment service unavailable. Please try again shortly." };
+        }
+
+        await createPendingBooking({
+          userId,
+          bookingRef,
+          flightId,
+          passengerName,
+          seat: seatNumber,
+          email: userEmail,
+          stripeSessionId: session.id,
+          expiresAt,
+        });
+
+        return {
+          checkoutUrl: session.url!,
+          bookingRef,
+          priceUsd,
+          flightId,
+          seatNumber,
+          passengerName,
+        };
+      },
+    }),
   };
 
   // Only send tools the user can actually use — search_flights + get_flight_seats
   // come from the MCP server (lib/mcp-bridge.ts) and are merged in the route.
   if (userId) {
     return {
-      book_flight:  tools.book_flight,
-      get_booking:  tools.get_booking,
-      change_seat:  tools.change_seat,
+      create_checkout: tools.create_checkout,
+      get_booking:     tools.get_booking,
+      change_seat:     tools.change_seat,
     };
   }
   return {

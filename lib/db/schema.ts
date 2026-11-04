@@ -54,16 +54,20 @@ export const messages = pgTable("messages", {
 });
 
 export const bookings = pgTable("bookings", {
-  id:            text("id").primaryKey(),
+  id:               text("id").primaryKey(),
   // No FK — guest bookings use "gs-<timestamp>" as userId, not a real users.id
-  userId:        text("user_id").notNull(),
-  bookingRef:    text("booking_ref").notNull().unique(), // BK-... auth, GS-... guest
-  flightId:      text("flight_id").notNull(),
-  passengerName: text("passenger_name").notNull(),
-  seat:          text("seat").notNull(),
-  email:         text("email"), // populated for guest bookings; auth users have email in users table
-  status:        text("status").notNull().default("confirmed"),
-  createdAt:     timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  userId:           text("user_id").notNull(),
+  bookingRef:       text("booking_ref").notNull().unique(), // BK-... auth, GS-... guest
+  flightId:         text("flight_id").notNull(),
+  passengerName:    text("passenger_name").notNull(),
+  seat:             text("seat").notNull(),
+  email:            text("email"), // populated for guest bookings; auth users have email in users table
+  status:           text("status").notNull().default("confirmed"),
+  // Stripe payment fields — null for guest (OTP-verified) bookings
+  stripeSessionId:  text("stripe_session_id").unique(),
+  paymentStatus:    text("payment_status").notNull().default("paid"), // "pending" | "paid" | "expired" | "failed"
+  expiresAt:        timestamp("expires_at", { mode: "date" }),
+  createdAt:        timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
 export const guestOtps = pgTable("guest_otps", {

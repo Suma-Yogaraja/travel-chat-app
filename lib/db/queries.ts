@@ -1,4 +1,4 @@
-import { eq, and, asc, desc, gt, isNull } from "drizzle-orm";
+import { eq, and, asc, desc, gt, isNull, ne } from "drizzle-orm";
 import { db } from "./index";
 import { conversations, messages, bookings, guestOtps, users, passwordResetTokens } from "./schema";
 import { randomUUID, createHash } from "crypto";
@@ -102,7 +102,7 @@ export async function getBookings(userId: string) {
   return db
     .select()
     .from(bookings)
-    .where(eq(bookings.userId, userId))
+    .where(and(eq(bookings.userId, userId), ne(bookings.paymentStatus, "pending")))
     .orderBy(asc(bookings.createdAt));
 }
 
@@ -271,4 +271,46 @@ export async function markPasswordResetTokenUsed(id: string) {
     .update(passwordResetTokens)
     .set({ usedAt: new Date() })
     .where(eq(passwordResetTokens.id, id));
+}
+
+// --- Stripe payment ---
+
+export async function createPendingBooking(params: {
+  userId: string;
+  bookingRef: string;
+  flightId: string;
+  passengerName: string;
+  seat: string;
+  email?: string;
+  stripeSessionId: string;
+  expiresAt: Date;
+}) {
+  const id = randomUUID();
+  const [booking] = await db
+    .insert(bookings)
+    .values({ id, ...params, paymentStatus: "pending" })
+    .returning();
+  return booking;
+}
+
+export async function confirmBooking(stripeSessionId: string) {
+  await db
+    .update(bookings)
+    .set({ paymentStatus: "paid", status: "confirmed", expiresAt: null })
+    .where(eq(bookings.stripeSessionId, stripeSessionId));
+}
+
+export async function expireBooking(stripeSessionId: string) {
+  await db
+    .update(bookings)
+    .set({ paymentStatus: "expired", status: "cancelled" })
+    .where(eq(bookings.stripeSessionId, stripeSessionId));
+}
+
+export async function getBookingByStripeSession(stripeSessionId: string) {
+  const [row] = await db
+    .select()
+    .from(bookings)
+    .where(eq(bookings.stripeSessionId, stripeSessionId));
+  return row ?? null;
 }

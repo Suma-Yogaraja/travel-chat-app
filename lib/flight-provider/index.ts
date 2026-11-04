@@ -29,18 +29,19 @@ export interface Booking {
 }
 
 export interface FlightProvider {
-  searchFlights(params: { origin: string; destination: string; date: string }): Flight[];
-  getFlightSeats(flightId: string): Seat[];
-  bookFlight(params: { flightId: string; passengerName: string; seatNumber: string }): Booking;
-  getBooking(bookingId: string): Booking;
-  changeSeat(params: { bookingId: string; newSeat: string }): Booking;
+  searchFlights(params: { origin: string; destination: string; date: string }): Promise<Flight[]>;
+  getFlightSeats(flightId: string): Promise<Seat[]>;
+  bookFlight(params: { flightId: string; passengerName: string; seatNumber: string }): Promise<Booking>;
+  getBooking(bookingId: string): Promise<Booking>;
+  changeSeat(params: { bookingId: string; newSeat: string }): Promise<Booking>;
 }
 
 import { MockProvider } from "./mock-provider";
+import { DuffelProvider } from "./duffel-provider";
 
 export function getProvider(): FlightProvider {
-  if (process.env.FLIGHT_PROVIDER === "amadeus") {
-    throw new Error("AmadeusProvider not yet implemented — set FLIGHT_PROVIDER=mock");
+  if (process.env.FLIGHT_PROVIDER === "duffel") {
+    return new DuffelProvider();
   }
   return new MockProvider();
 }
