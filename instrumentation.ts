@@ -1,11 +1,12 @@
 import { registerOTel } from "@vercel/otel";
-import { LangfuseExporter } from "langfuse-vercel";
+import { registerTelemetry } from "ai";
+import { LangfuseVercelAiSdkIntegration } from "@langfuse/vercel-ai-sdk";
+import { langfuseProcessor } from "./lib/langfuse-processor";
 
 export function register() {
-  console.log("[instrumentation] register() called, LANGFUSE_PUBLIC_KEY set:", !!process.env.LANGFUSE_PUBLIC_KEY);
   registerOTel({
     serviceName: "travel-chat-app",
-    traceExporter: new LangfuseExporter({ debug: true }),
+    spanProcessors: [langfuseProcessor],
   });
-  console.log("[instrumentation] OTel registered with LangfuseExporter");
+  registerTelemetry(new LangfuseVercelAiSdkIntegration());
 }

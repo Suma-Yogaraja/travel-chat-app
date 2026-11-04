@@ -11,6 +11,12 @@ import { createTravelTools } from "@/lib/tools";
 import { connectMcpTools } from "@/lib/mcp-bridge";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiHandler } from "@/lib/api-handler";
+import { langfuseProcessor } from "@/lib/langfuse-processor";
+import { LangfuseVercelAiSdkIntegration } from "@langfuse/vercel-ai-sdk";
+
+// Pass per-call to guarantee the integration is used even if globalThis registration
+// timing differs across Next.js module contexts.
+const langfuseIntegration = new LangfuseVercelAiSdkIntegration();
 
 // Read skill files once at module load — not per request.
 // Prompt caching handles token cost; this avoids repeated disk I/O.
@@ -206,10 +212,7 @@ export const POST = apiHandler(async (req: Request) => {
     tools: allTools,
     maxOutputTokens: 600,
     stopWhen: stepCountIs(4),
-    experimental_telemetry: {
-      isEnabled: true,
-      functionId: "travel-chat",
-    },
+    telemetry: { isEnabled: true, functionId: "travel-chat", integrations: [langfuseIntegration] },
     onStepFinish: async (step) => {
       await handleStep(step);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -222,6 +225,8 @@ export const POST = apiHandler(async (req: Request) => {
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ responseMessage }) => {
+      // Flush OTel spans to Langfuse before the serverless instance is frozen.
+      await langfuseProcessor.forceFlush();
       await closeMcp();
       if (session?.user?.id && conversationId) {
         await saveMessage(conversationId, "assistant", responseMessage).catch(err =>

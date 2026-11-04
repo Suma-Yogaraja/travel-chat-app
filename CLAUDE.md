@@ -88,25 +88,21 @@ All auth pages (`login`, `register`, `forgot-password`, `reset-password`) have `
 
 ## Observability (Langfuse)
 
-LLM traces are captured via Vercel AI SDK's built-in OpenTelemetry integration and exported to Langfuse.
+LLM traces are captured via `@langfuse/vercel-ai-sdk` + `@langfuse/otel` (Langfuse v5 SDK stack).
 
 **Setup:**
-- `instrumentation.ts` at the project root registers the `LangfuseExporter` via `registerOTel`
-- `streamText` in `app/api/chat/route.ts` has `experimental_telemetry: { isEnabled: true, functionId: "travel-chat" }`
-- Requires `LANGFUSE_SECRET_KEY` and `LANGFUSE_PUBLIC_KEY` env vars — get from cloud.langfuse.com
+- `instrumentation.ts`: `registerOTel({ spanProcessors: [langfuseProcessor] })` + `registerTelemetry(new LangfuseVercelAiSdkIntegration())`
+- `lib/langfuse-processor.ts`: singleton `LangfuseSpanProcessor({ exportMode: "immediate" })` — shared between instrumentation and the chat route
+- `app/api/chat/route.ts`: `telemetry: { isEnabled: true, functionId: "travel-chat", integrations: [langfuseIntegration] }` on `streamText`; `langfuseProcessor.forceFlush()` in `onFinish`
+- Requires `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASEURL` env vars (also reads `LANGFUSE_BASE_URL`)
 
-**What Langfuse captures automatically per conversation:**
-- Full input messages (system prompt, user messages, tool results)
-- Full model output
-- Every tool call and its result
-- Token usage (prompt + completion) and latency per step
-- Prompt cache hit/miss (visible in token breakdown)
-- Cost per trace (calculated from token usage)
+**Why this stack (not `langfuse-vercel` v3):**
+Langfuse's server now only accepts spans via their OTel HTTP endpoint (`/api/public/otel/v1/traces`). The old `langfuse-vercel` v3 SDK sent via a proprietary format that was rejected with HTTP 400. AI SDK v7 also replaced `experimental_telemetry`'s OTel global approach with a callback integration system — `registerTelemetry()` is now the correct hook point.
 
-**Why this approach:**
-- OTel-based — instrumentation is vendor-neutral; exporter can be swapped to Datadog/LangSmith without changing app code
-- Zero manual instrumentation — one flag on `streamText` captures everything
-- AI-specific observability (tool traces, cost per conversation) vs. general infrastructure logging
+**What Langfuse captures per conversation:**
+- Full model input + output with tool calls and results
+- Token usage, latency, and cost per trace
+- Span hierarchy: `invoke_agent` → `chat` → per-step spans
 
 ## Still to do
 - Real Amadeus flight API via `amadeus-provider.ts` (swap via `FLIGHT_PROVIDER` env var)
