@@ -18,12 +18,13 @@ export async function createConversation(userId: string, title: string) {
   return conv;
 }
 
-export async function getConversations(userId: string) {
+export async function getConversations(userId: string, limit = 50) {
   return db
     .select()
     .from(conversations)
     .where(eq(conversations.userId, userId))
-    .orderBy(desc(conversations.updatedAt));
+    .orderBy(desc(conversations.updatedAt))
+    .limit(limit);
 }
 
 export async function getConversation(id: string, userId: string) {

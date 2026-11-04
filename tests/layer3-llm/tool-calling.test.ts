@@ -3,8 +3,8 @@
  *
  * These tests use a real LLM (Haiku) to verify that Claude calls the right
  * tool given natural language input. They cost a few fractions of a cent each.
- * Run manually with: npx vitest run tests/layer3-llm
- * Do NOT run in CI.
+ * They run automatically when ANTHROPIC_API_KEY is set (local or CI).
+ * They skip gracefully when the key is absent.
  */
 import { describe, test, expect, beforeAll } from "vitest";
 import { config } from "dotenv";
@@ -12,8 +12,10 @@ import { generateText, tool, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 
-// Load .env.local so ANTHROPIC_API_KEY is available
+// Load .env.local so ANTHROPIC_API_KEY is available in local dev
 config({ path: ".env.local" });
+
+const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
 
 // Minimal tool definitions matching the MCP server schemas.
 // We don't need execute — we're only testing that the model calls the right tool.
@@ -56,14 +58,14 @@ const travelTools = {
 };
 
 beforeAll(() => {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY not set — add it to .env.local");
+  if (!hasApiKey) {
+    console.warn("ANTHROPIC_API_KEY not set — Layer 3 tests will be skipped.");
   }
 });
 
 const SYSTEM = "You are a travel assistant. Always use the available tools to help users — never ask clarifying questions, just call the most appropriate tool with reasonable defaults.";
 
-describe("Layer 3 — LLM tool selection", () => {
+describe.skipIf(!hasApiKey)("Layer 3 — LLM tool selection", () => {
   test("user asks for flights → Claude calls search_flights", async () => {
     const result = await generateText({
       model: anthropic("claude-haiku-4-5-20251001"),

@@ -53,6 +53,11 @@ export default function GuestChatPage() {
             <ChatMessages messages={messages} onSendMessage={text => sendMessage({ text })} />
             <div ref={bottomRef} />
           </div>
+          {status === "error" && (
+            <div className="px-4 py-2 text-sm text-red-400 border-t border-gray-800">
+              Something went wrong. Please try again.
+            </div>
+          )}
           <ChatInput
             onSend={text => sendMessage({ text })}
             disabled={isLoading}

@@ -18,12 +18,11 @@ const SKILLS_BASE = ["flight-search", "booking", "seat-management"]
   .join("\n\n---\n\n");
 
 function buildSystemPrompt(isGuest: boolean): string {
-  const today = new Date().toISOString().slice(0, 10);
   const authContext = isGuest
     ? "CURRENT USER: Guest (not signed in). Before booking, call send_booking_otp with their email, wait for them to confirm the code, then call book_flight with the otp included. Do NOT ask whether they are signed in — you already know they are not."
     : "CURRENT USER: Signed in. Do not ask for email or auth status.";
 
-  return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\nTODAY'S DATE: ${today}. Use this to resolve relative dates like "today", "tomorrow", "next Friday" into YYYY-MM-DD format before calling any tool.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;
+  return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;
 }
 
 export async function POST(req: Request) {
@@ -178,6 +177,20 @@ export async function POST(req: Request) {
     content: [{ type: "text", text: "Understood." }],
   };
 
+  // Inject today's date as a separate uncached message so the cached system prompt
+  // stays stable across days. If today's date were inside the cached block, the
+  // cache would miss at midnight every day for every user.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dateMessage: any = {
+    role: "user",
+    content: [{ type: "text", text: `Today's date is ${new Date().toISOString().slice(0, 10)}. Use this to resolve relative dates like "today", "tomorrow", or "next Friday" into YYYY-MM-DD format.` }],
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dateAck: any = {
+    role: "assistant",
+    content: [{ type: "text", text: "Got it." }],
+  };
+
   // Connect MCP server in-process — provides search_flights + get_flight_seats
   const { tools: mcpTools, close: closeMcp } = await connectMcpTools();
   const sessionTools = createTravelTools(session?.user?.id, session?.user?.email ?? undefined);
@@ -187,9 +200,9 @@ export async function POST(req: Request) {
   try {
     result = streamText({
       model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
-      messages: [cachedSystemMessage, cachedSystemAck, ...modelMessages],
+      messages: [cachedSystemMessage, cachedSystemAck, dateMessage, dateAck, ...modelMessages],
       tools: allTools,
-      maxOutputTokens: 350,  // Travel responses should be short — cap output to control cost
+      maxOutputTokens: 600,  // Increased from 350 — prevents cut-off on booking confirmations
       stopWhen: stepCountIs(4),
       onStepFinish: async (step) => {
         await handleStep(step);

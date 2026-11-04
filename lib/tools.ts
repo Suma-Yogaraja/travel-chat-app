@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { randomUUID } from "crypto";
 import { getProvider } from "./flight-provider/index";
 import {
   getBookingByRef, updateBookingSeat,
@@ -13,12 +14,11 @@ import {
 
 const provider = getProvider();
 
-let gsCounter = 0;
 function guestBookingRef() {
-  return `GS-${Date.now()}-${(++gsCounter).toString().padStart(3, "0")}`;
+  return `GS-${Date.now()}-${randomUUID().slice(0, 8)}`;
 }
 function guestUserId() {
-  return `gs-${Date.now()}`;
+  return `gs-${randomUUID().slice(0, 12)}`;
 }
 function generateOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString();
