@@ -35,7 +35,7 @@ Built as a learning project to understand core AI engineering concepts: MCP serv
 | Email | Nodemailer + Gmail |
 | Observability | Langfuse (`@langfuse/vercel-ai-sdk` + `@langfuse/otel`) |
 | Styling | Tailwind CSS v4 |
-| Testing | Vitest (27 tests across 3 layers) |
+| Testing | Vitest (130 unit/contract tests across 3 layers + PostgreSQL integration) |
 
 ## Architecture
 
@@ -81,12 +81,17 @@ graph LR
 - **Streaming** — responses stream token by token via `streamText` + `toUIMessageStreamResponse`
 - **Skills as `.md` files** — `skills/` folder loaded into the system prompt; rules for search, booking, and seat management
 - **Adapter pattern** — swap mock flight data for Duffel (or any real API) via `FLIGHT_PROVIDER` env var, zero code changes
+- **Server-authoritative pricing** — model passes `offerId` (UUID), backend re-validates price with Duffel before charging. Model can never supply or influence the price. Fail-closed: if Duffel is unreachable, checkout is refused.
+- **Guest session cookie** — HttpOnly `guest-session-id` cookie ties search offers to the guest who created them. UUID alone is not authorization; matching cookie required.
+- **PaymentProvider adapter** — `lib/payment-provider.ts` interface isolates Stripe behind a boundary. Tests inject a fake; production uses `lib/stripe-payment-provider.ts`.
 - **Stripe webhooks as source of truth** — booking is only confirmed when the `checkout.session.completed` webhook fires, never on browser redirect
+- **Webhook idempotency** — app-level `paymentStatus === "pending"` guard + SQL `WHERE paymentStatus = 'pending'` as final defence
 - **Circuit breaker** — `lib/stripe.ts` opens after 3 consecutive Stripe failures, auto-recovers after 60s
 - **Fallback seat map** — when Duffel returns no seatmap (sandbox limitation), a deterministic layout is generated from the flight ID
 - **Global API handler** — `lib/api-handler.ts` wraps every route; consistent error format, centralised logging
 - **LLM observability** — Langfuse v5 stack captures tool traces, token costs, and latency per conversation
 - **JSONB message storage** — full `UIMessage` objects stored in Postgres so tool call history survives refresh
+- **Simulated booking** — Stripe payment succeeds, booking is confirmed in DB, email sent. No real airline reservation is issued via Duffel. Disclaimer shown in the success page and all email templates.
 
 ## Project structure
 
@@ -98,21 +103,30 @@ travel-chat-app/
 │   └── index.ts                     # search_flights, get_flight_seats (+ fallback seat map)
 ├── skills/
 │   ├── flight-search.md             # Rules: when to call search, date validation
-│   ├── booking.md                   # Rules: Stripe flow (auth), OTP flow (guest)
+│   ├── booking.md                   # Rules: Stripe flow (auth + guest), price-change handling
 │   └── seat-management.md           # Rules: seat maps, guest OTP for changes
 ├── lib/
 │   ├── api-handler.ts               # Global error handler HOF + AppError class
 │   ├── auth.ts                      # NextAuth config (GitHub + Google + Credentials)
-│   ├── email.ts                     # Nodemailer helpers (booking confirm, OTP, reset)
+│   ├── email.ts                     # Nodemailer helpers (booking confirm, OTP, reset, seat change, cancel)
 │   ├── stripe.ts                    # Stripe client singleton + circuit breaker + live key guard
+│   ├── payment-provider.ts          # PaymentProvider interface + CheckoutParams type
+│   ├── stripe-payment-provider.ts   # Stripe implementation of PaymentProvider
+│   ├── guest-session.ts             # getOrCreateGuestSession() — HttpOnly cookie, 24h
+│   ├── chat-history.ts              # searchFlightsPlaceholder() — extracts F1=<uuid> for context trimmer
+│   ├── booking-status.ts            # getBookingPaymentStatus() — pure mapping function
 │   ├── rate-limit.ts                # Sliding-window rate limiter (20 req/min per IP)
-│   ├── tools.ts                     # Session-aware tools: create_checkout (auth+guest), OTP tools (guest), get_booking, change_seat
-│   ├── mcp-bridge.ts                # Connects MCP server in-process
+│   ├── tools.ts                     # createTravelTools(TravelToolsContext) — create_checkout, OTP tools, get_booking, change_seat
+│   ├── mcp-bridge.ts                # Connects MCP server in-process, binds McpContext per request
 │   ├── langfuse-processor.ts        # Singleton LangfuseSpanProcessor
+│   ├── offers/
+│   │   ├── offer-service.ts         # validateOfferForCheckout(), persistFlightOffer(), ownership enforcement
+│   │   ├── offer-repository.ts      # DB queries for flight_offers table
+│   │   └── price-confirmation.ts    # HMAC-SHA256 priceChangeToken generation/verification
 │   ├── db/
-│   │   ├── schema.ts                # Drizzle table definitions
-│   │   ├── queries.ts               # Typed DB helpers
-│   │   └── index.ts                 # Drizzle client
+│   │   ├── schema.ts                # Drizzle table definitions (incl. flight_offers)
+│   │   ├── queries.ts               # Typed DB helpers (atomic OTP: UPDATE WHERE usedAt IS NULL)
+│   │   └── index.ts                 # Drizzle client (Neon HTTP)
 │   └── flight-provider/
 │       ├── index.ts                 # FlightProvider interface + factory
 │       ├── duffel-provider.ts       # Duffel API implementation (active)
@@ -121,10 +135,10 @@ travel-chat-app/
 │   ├── api/
 │   │   ├── chat/route.ts            # Main AI streaming route
 │   │   └── stripe/
-│   │       ├── webhook/route.ts     # Stripe webhook — confirms/expires bookings
+│   │       ├── webhook/route.ts     # Stripe webhook — confirms/expires bookings (source of truth)
 │   │       └── status/route.ts      # Polling endpoint for success page
 │   ├── booking/
-│   │   └── success/page.tsx         # Payment confirmation page (polls status)
+│   │   └── success/page.tsx         # Payment confirmation page (polls status, shows simulated-booking disclaimer)
 │   ├── chat/
 │   │   ├── [id]/page.tsx            # Authenticated conversation
 │   │   ├── guest/page.tsx           # Guest mode
@@ -135,11 +149,13 @@ travel-chat-app/
 │   └── chat/
 │       ├── pay-button.tsx           # Pay button card rendered on create_checkout output
 │       ├── seat-map.tsx             # Interactive seat picker
-│       └── flight-results.tsx       # Flight cards
+│       └── flight-results.tsx       # Flight cards with offerId attached
 └── tests/
-    ├── layer1-tool-logic/           # Unit tests — provider logic, password validation (20 tests)
-    ├── layer2-mcp-contract/         # MCP contract tests — tool schemas, guest vs auth tools (7 tests)
-    └── layer3-llm/                  # LLM integration tests (2 tests — require ANTHROPIC_API_KEY)
+    ├── layer1-tool-logic/           # Unit tests — pure functions, no DB (booking-lifecycle, currency, price-confirmation)
+    ├── layer2-mcp-contract/         # Contract tests — offer ownership, tool schemas, webhook, checkout (130 tests)
+    ├── layer3-llm/                  # LLM tests — real Claude Haiku (require RUN_LLM_TESTS=1 + ANTHROPIC_API_KEY)
+    └── integration/
+        └── otp-atomicity.test.ts    # PostgreSQL concurrency test (requires TEST_DATABASE_URL)
 ```
 
 ## What's real vs mocked
@@ -206,10 +222,17 @@ Copy the printed `whsec_...` key into `STRIPE_WEBHOOK_SECRET`.
 ### 6. Run tests
 
 ```bash
-npx vitest run
+# Unit + contract tests (no network, no DB)
+npx vitest run tests/layer1-tool-logic tests/layer2-mcp-contract
+
+# LLM tests — costs real Anthropic credits, opt-in
+RUN_LLM_TESTS=1 npx vitest run tests/layer3-llm
+
+# PostgreSQL concurrency integration test — use a test/dev DB, never production
+TEST_DATABASE_URL=<neon-url> npx vitest run tests/integration
 ```
 
-Layer 3 (LLM) tests require `ANTHROPIC_API_KEY` **and** `RUN_LLM_TESTS=1` — they cost real credits so they are opt-in.
+`TEST_DATABASE_URL` must be set explicitly for the integration test — using `DATABASE_URL` (which might point to your dev or production DB) is intentionally blocked.
 
 ## How it works
 
