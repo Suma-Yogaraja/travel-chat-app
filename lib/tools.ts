@@ -14,7 +14,8 @@ import {
 import { withStripe } from "./stripe";
 
 function guestBookingRef() {
-  return `GS-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  // 122 bits of cryptographically secure randomness — used as bearer credential for guests
+  return `GS-${randomUUID().replace(/-/g, "")}`;
 }
 function guestUserId() {
   return `gs-${randomUUID().slice(0, 12)}`;

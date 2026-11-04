@@ -288,17 +288,25 @@ export async function createPendingBooking(params: {
 }
 
 export async function confirmBooking(stripeSessionId: string) {
+  // Only transition pending → paid. A late completed event cannot re-open an expired booking.
   await db
     .update(bookings)
     .set({ paymentStatus: "paid", status: "confirmed", expiresAt: null })
-    .where(eq(bookings.stripeSessionId, stripeSessionId));
+    .where(and(
+      eq(bookings.stripeSessionId, stripeSessionId),
+      eq(bookings.paymentStatus, "pending"),
+    ));
 }
 
 export async function expireBooking(stripeSessionId: string) {
+  // Only transition pending → expired. A confirmed booking cannot be expired retroactively.
   await db
     .update(bookings)
     .set({ paymentStatus: "expired", status: "cancelled" })
-    .where(eq(bookings.stripeSessionId, stripeSessionId));
+    .where(and(
+      eq(bookings.stripeSessionId, stripeSessionId),
+      eq(bookings.paymentStatus, "pending"),
+    ));
 }
 
 export async function getBookingByStripeSession(stripeSessionId: string) {

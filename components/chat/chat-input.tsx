@@ -20,11 +20,31 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
 
   useEffect(() => {
     if (!disabled) {
-      // Defer focus until after React finishes flushing DOM updates
       const raf = requestAnimationFrame(() => textareaRef.current?.focus());
       return () => cancelAnimationFrame(raf);
     }
   }, [disabled]);
+
+  useEffect(() => {
+    const handleRebook = (e: Event) => {
+      const detail = (e as CustomEvent<unknown>).detail;
+      if (!detail || typeof detail !== "object") return;
+      const { flightId, seatNumber, passengerName } = detail as Record<string, unknown>;
+
+      // Validate — treat CustomEvent payload as untrusted input
+      if (typeof flightId !== "string"      || !/^[\w\-]{1,60}$/.test(flightId))      return;
+      if (typeof seatNumber !== "string"    || !/^\d{1,3}[A-F]$/i.test(seatNumber))   return;
+      if (typeof passengerName !== "string" || passengerName.length < 1 || passengerName.length > 100) return;
+
+      const safe = (s: string) => s.replace(/[<>"']/g, "");
+      const text = `I'd like to rebook my previous flight ${safe(flightId)} for ${safe(passengerName)}, preferably seat ${safe(seatNumber)}. Please check current availability and price before proceeding.`;
+      setInput(text);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+
+    window.addEventListener("rebook", handleRebook);
+    return () => window.removeEventListener("rebook", handleRebook);
+  }, []);
 
   function handleSubmit() {
     const trimmed = input.trim();

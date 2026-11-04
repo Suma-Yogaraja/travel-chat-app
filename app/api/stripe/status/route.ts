@@ -1,4 +1,5 @@
 import { getBookingByStripeSession } from "@/lib/db/queries";
+import { getBookingPaymentStatus } from "@/lib/booking-status";
 import { auth } from "@/lib/auth";
 import { apiHandler } from "@/lib/api-handler";
 
@@ -17,11 +18,14 @@ export const GET = apiHandler(async (req: Request) => {
     return new Response("Unauthorized", { status: 403 });
   }
 
+  const data = getBookingPaymentStatus(booking);
+
+  // Success page uses `status` (not `paymentStatus`) — keep that field name
   return Response.json({
-    status: booking.paymentStatus,
-    bookingRef: booking.bookingRef,
-    flightId: booking.flightId,
-    seat: booking.seat,
-    passengerName: booking.passengerName,
+    status:        data.paymentStatus,
+    bookingRef:    data.bookingRef,
+    flightId:      data.flightId,
+    seat:          data.seat,
+    passengerName: data.passengerName,
   });
 });
