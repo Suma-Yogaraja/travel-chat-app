@@ -17,7 +17,7 @@ Built as a learning project to understand core AI engineering concepts: MCP serv
 
 | Layer | Tool |
 |---|---|
-| Framework | Next.js 15 App Router |
+| Framework | Next.js 16 App Router |
 | AI | Vercel AI SDK v7 |
 | Model | Claude Haiku (`claude-haiku-4-5-20251001`) |
 | MCP | `@modelcontextprotocol/sdk` (InMemoryTransport) |
@@ -36,7 +36,7 @@ Built as a learning project to understand core AI engineering concepts: MCP serv
 - **Hooks** — `onStepFinish` logs every tool call + saves bookings, `onFinish` saves the response to DB
 - **Skills as `.md` files** — `skills/` folder loaded into the system prompt; Anthropic prompt caching keeps token cost low
 - **Global API handler** — `lib/api-handler.ts` wraps every route; consistent error format, centralised logging
-- **LLM observability** — Vercel AI SDK `experimental_telemetry` + Langfuse; captures tool traces, token costs, cache hit rate, latency per conversation automatically
+- **LLM observability** — `@langfuse/vercel-ai-sdk` + `@langfuse/otel` (Langfuse v5 stack); `registerTelemetry()` hooks into AI SDK v7's callback system, `LangfuseSpanProcessor` exports OTel spans to Langfuse — captures tool traces, token costs, latency per conversation
 - **JSONB message storage** — full `UIMessage` objects stored in Postgres so tool call history survives refresh
 - **Adapter pattern** — swap mock flight data for a real API via `FLIGHT_PROVIDER` env var, zero code changes
 
@@ -61,6 +61,7 @@ travel-chat-app/
 │   ├── tools.ts                     # Session-aware direct tools (book, change_seat, OTP)
 │   ├── mcp-bridge.ts                # Connects MCP server in-process
 │   ├── ai-hooks.ts                  # Logging hook for tool calls
+│   ├── langfuse-processor.ts        # Singleton LangfuseSpanProcessor (shared by instrumentation + chat route)
 │   ├── db/
 │   │   ├── schema.ts                # Drizzle table definitions
 │   │   ├── queries.ts               # Typed DB helpers
@@ -109,7 +110,7 @@ Fill in:
 - `GITHUB_ID` + `GITHUB_SECRET` — GitHub OAuth app, callback: `http://localhost:3002/api/auth/callback/github`
 - `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` — Google OAuth app, callback: `http://localhost:3002/api/auth/callback/google`
 - `GMAIL_USER` + `GMAIL_APP_PASSWORD` — Gmail account for sending OTP and booking confirmation emails
-- `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY` — from [cloud.langfuse.com](https://cloud.langfuse.com) (free tier); enables LLM trace observability
+- `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_BASEURL` — from [cloud.langfuse.com](https://cloud.langfuse.com) (free tier); US region: `https://us.cloud.langfuse.com`
 
 ### 3. Push the database schema
 

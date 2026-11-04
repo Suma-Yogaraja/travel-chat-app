@@ -9,7 +9,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - **Flight data** comes from `lib/flight-provider/` — always use `getProvider()`, never import mock-provider directly.
 - **Skills** in `skills/` are `.md` files loaded once at module level (not per-request) and composed into the system prompt with Anthropic prompt caching.
 - **Dual mode**: Guest (`/chat/guest`) = in-memory React state, no DB. Authenticated (`/chat/[id]`) = Postgres-persisted.
-- **Auth** via NextAuth v5 (GitHub OAuth). Session available via `auth()` in server components and API routes.
+- **Auth** via NextAuth v5 — GitHub OAuth, Google OAuth, Email/Password (Credentials). Session available via `auth()` in server components and API routes.
 - **Email** via Nodemailer + Gmail. Requires `GMAIL_USER` and `GMAIL_APP_PASSWORD` in `.env.local`.
 
 ## Conventions
@@ -32,6 +32,8 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - `lib/auth.ts` — NextAuth config
 - `lib/email.ts` — Nodemailer email functions (booking confirm, seat change, cancel, OTP)
 - `app/api/chat/route.ts` — main AI streaming route
+- `lib/langfuse-processor.ts` — singleton LangfuseSpanProcessor shared by instrumentation + chat route
+- `instrumentation.ts` — registers OTel pipeline + AI SDK telemetry integration on startup
 - `skills/` — Claude's travel assistant behaviour rules
 
 ## Cost optimisations in place
@@ -106,4 +108,3 @@ Langfuse's server now only accepts spans via their OTel HTTP endpoint (`/api/pub
 
 ## Still to do
 - Real Amadeus flight API via `amadeus-provider.ts` (swap via `FLIGHT_PROVIDER` env var)
-- Google OAuth: requires `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` in `.env.local` and Vercel env vars
