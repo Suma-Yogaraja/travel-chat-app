@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { getUserByEmail, createUserWithPassword } from "@/lib/db/queries";
 import { sendWelcomeEmail } from "@/lib/email";
 import { validatePassword } from "@/lib/password";
+import { apiHandler } from "@/lib/api-handler";
 
 const schema = z.object({
   firstName: z.string().min(1),
@@ -16,7 +17,7 @@ const schema = z.object({
   }),
 });
 
-export async function POST(req: Request) {
+export const POST = apiHandler(async (req) => {
   const body = await req.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -40,4 +41,4 @@ export async function POST(req: Request) {
   );
 
   return NextResponse.json({ ok: true }, { status: 201 });
-}
+});

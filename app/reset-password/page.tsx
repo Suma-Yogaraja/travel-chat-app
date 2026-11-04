@@ -41,6 +41,8 @@ function ResetPasswordForm() {
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Reset failed"); return; }
       setSuccess(true);
+    } catch {
+      setError("Something went wrong. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }

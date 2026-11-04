@@ -35,9 +35,19 @@ export default function LoginPage() {
     setError("");
   }
 
+  async function handleSocialSignIn(provider: "github" | "google") {
+    setError("");
+    try {
+      await signIn(provider, { redirectTo: "/chat" });
+    } catch {
+      setError("Sign in failed. Please check your connection and try again.");
+    }
+  }
+
   async function handleCredentials(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setError("");
     try {
       const result = await signIn("credentials", {
         email: form.email,
@@ -49,6 +59,8 @@ export default function LoginPage() {
       } else {
         router.push("/chat");
       }
+    } catch {
+      setError("Sign in failed. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -62,17 +74,19 @@ export default function LoginPage() {
           <p className="mt-2 text-sm text-gray-400">Save your conversations and pick up where you left off</p>
         </div>
 
+        {error && <p className="mb-4 text-sm text-red-400 text-center">{error}</p>}
+
         {/* Social sign-in */}
         <div className="space-y-3">
           <button
-            onClick={() => signIn("github", { redirectTo: "/chat" })}
+            onClick={() => handleSocialSignIn("github")}
             className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-[#1a1a1a]"
           >
             <GitHubIcon />
             Continue with GitHub
           </button>
           <button
-            onClick={() => signIn("google", { redirectTo: "/chat" })}
+            onClick={() => handleSocialSignIn("google")}
             className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-[#1a1a1a]"
           >
             <GoogleIcon />
@@ -112,8 +126,6 @@ export default function LoginPage() {
               placeholder="Your password"
             />
           </div>
-
-          {error && <p className="text-sm text-red-400">{error}</p>}
 
           <button
             type="submit" disabled={loading}

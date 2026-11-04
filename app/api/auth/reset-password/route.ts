@@ -3,13 +3,14 @@ import { z } from "zod";
 import { createHash } from "crypto";
 import bcrypt from "bcryptjs";
 import { getValidPasswordResetToken, markPasswordResetTokenUsed, updateUserPassword } from "@/lib/db/queries";
+import { apiHandler } from "@/lib/api-handler";
 
 const schema = z.object({
   token:    z.string().min(1),
   password: z.string().min(8),
 });
 
-export async function POST(req: Request) {
+export const POST = apiHandler(async (req) => {
   const body = await req.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -29,4 +30,4 @@ export async function POST(req: Request) {
   await updateUserPassword(row.userId, passwordHash);
 
   return NextResponse.json({ ok: true });
-}
+});

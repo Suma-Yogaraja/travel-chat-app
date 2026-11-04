@@ -10,7 +10,18 @@ export default async function BookingsPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
 
-  const bookings = await getBookings(session.user.id);
+  let bookings;
+  try {
+    bookings = await getBookings(session.user.id);
+  } catch {
+    return (
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-2xl mx-auto text-center py-16">
+          <p className="text-sm text-red-400">Unable to load bookings. Please try again later.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-6">

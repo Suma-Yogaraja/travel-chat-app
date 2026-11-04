@@ -40,7 +40,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - Tool result trimming: old seat map / flight search results replaced with one-line placeholders
 - Role-based tool filtering: guests get 5 tools, auth users get 3 (MCP) + 3 (direct) = 6
 - History cap: last 30 model messages only
-- Output cap: `maxOutputTokens: 350`, `stopWhen: stepCountIs(4)`
+- Output cap: `maxOutputTokens: 600`, `stopWhen: stepCountIs(4)`
 
 ## Auth providers
 - GitHub OAuth, Google OAuth, Email/Password (Credentials) — all configured in `lib/auth.ts`
@@ -65,6 +65,48 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - `search_flights` MCP tool rejects past dates before calling the provider — returns `{ error: "..." }` if date < today
 - Mock provider ignores date (matches only on origin/destination) — date guard lives at MCP layer
 - Claude also instructed in `skills/flight-search.md` to refuse past dates before calling the tool
+
+## Error handling
+
+### Global API handler (`lib/api-handler.ts`)
+All API routes are wrapped with `apiHandler()` — a higher-order function that catches any unhandled error and returns a consistent response:
+- `AppError` (thrown intentionally with message + status) → `{ error: message }` JSON with that status
+- Anything else → `console.error("[API error] METHOD /path", err)` + 500
+- `app/api/auth/forgot-password/route.ts` keeps an inner try/catch to preserve its always-200 contract (prevents email enumeration); the outer `apiHandler` is a safety net on top
+
+### UI error boundaries
+- `app/global-error.tsx` — React error boundary; catches any render crash across the whole app, shows "Something went wrong / Try again" instead of a blank screen
+- `app/chat/[id]/page.tsx` and `app/chat/guest/page.tsx` — `status === "error"` banner shown at bottom of chat
+- `components/bookings/booking-actions.tsx` — cancel errors shown inline; `setLoading(false)` called on failure so the button never stays disabled
+- `app/chat/bookings/page.tsx` — DB error shows "Unable to load bookings. Please try again later."
+
+### Auth page error states
+All auth pages (`login`, `register`, `forgot-password`, `reset-password`) have `catch` blocks that surface network/server failures as inline error messages — loading state always resets on failure.
+
+### saveMessage in onFinish
+`saveMessage` in `onFinish` uses `.catch()` so a DB hiccup never kills the streaming response.
+
+## Observability (Langfuse)
+
+LLM traces are captured via Vercel AI SDK's built-in OpenTelemetry integration and exported to Langfuse.
+
+**Setup:**
+- `instrumentation.ts` at the project root registers the `LangfuseExporter` via `registerOTel`
+- `streamText` in `app/api/chat/route.ts` has `experimental_telemetry: { isEnabled: true, functionId: "travel-chat" }`
+- Requires `LANGFUSE_SECRET_KEY` and `LANGFUSE_PUBLIC_KEY` env vars — get from cloud.langfuse.com
+
+**What Langfuse captures automatically per conversation:**
+- Full input messages (system prompt, user messages, tool results)
+- Full model output
+- Every tool call and its result
+- Token usage (prompt + completion) and latency per step
+- Prompt cache hit/miss (visible in token breakdown)
+- Cost per trace (calculated from token usage)
+
+**Why this approach:**
+- OTel-based — instrumentation is vendor-neutral; exporter can be swapped to Datadog/LangSmith without changing app code
+- Zero manual instrumentation — one flag on `streamText` captures everything
+- AI-specific observability (tool traces, cost per conversation) vs. general infrastructure logging
 
 ## Still to do
 - Real Amadeus flight API via `amadeus-provider.ts` (swap via `FLIGHT_PROVIDER` env var)

@@ -7,10 +7,12 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setError("");
     try {
       await fetch("/api/auth/forgot-password", {
         method: "POST",
@@ -18,6 +20,8 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ email }),
       });
       setSubmitted(true);
+    } catch {
+      setError("Something went wrong. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -51,6 +55,8 @@ export default function ForgotPasswordPage() {
                 placeholder="ada@example.com"
               />
             </div>
+
+            {error && <p className="text-sm text-red-400">{error}</p>}
 
             <button
               type="submit" disabled={loading}

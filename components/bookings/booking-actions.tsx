@@ -12,6 +12,7 @@ interface Props {
 export function BookingActions({ bookingRef, status }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   if (status === "cancelled") return null;
 
@@ -19,25 +20,34 @@ export function BookingActions({ bookingRef, status }: Props) {
 
   if (confirming) {
     return (
-      <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-800">
-        <span className="text-xs text-gray-400">Cancel this booking?</span>
-        <button
-          onClick={async () => {
-            setLoading(true);
-            await cancelBookingAction(bookingRef);
-          }}
-          disabled={loading}
-          className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors"
-        >
-          {loading ? "Cancelling…" : "Yes, cancel"}
-        </button>
-        <button
-          onClick={() => setConfirming(false)}
-          disabled={loading}
-          className="text-xs text-gray-500 hover:text-gray-400 transition-colors"
-        >
-          Keep it
-        </button>
+      <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-gray-800">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-400">Cancel this booking?</span>
+          <button
+            onClick={async () => {
+              setLoading(true);
+              setError("");
+              try {
+                await cancelBookingAction(bookingRef);
+              } catch {
+                setError("Failed to cancel. Please try again.");
+                setLoading(false);
+              }
+            }}
+            disabled={loading}
+            className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors"
+          >
+            {loading ? "Cancelling…" : "Yes, cancel"}
+          </button>
+          <button
+            onClick={() => setConfirming(false)}
+            disabled={loading}
+            className="text-xs text-gray-500 hover:text-gray-400 transition-colors"
+          >
+            Keep it
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-400">{error}</p>}
       </div>
     );
   }

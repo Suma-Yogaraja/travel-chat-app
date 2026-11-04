@@ -10,6 +10,7 @@ import { sendBookingConfirmation } from "@/lib/email";
 import { createTravelTools } from "@/lib/tools";
 import { connectMcpTools } from "@/lib/mcp-bridge";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { apiHandler } from "@/lib/api-handler";
 
 // Read skill files once at module load — not per request.
 // Prompt caching handles token cost; this avoids repeated disk I/O.
@@ -25,15 +26,18 @@ function buildSystemPrompt(isGuest: boolean): string {
   return `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.\n\n${authContext}`;
 }
 
-export async function POST(req: Request) {
+export const POST = apiHandler(async (req: Request) => {
   const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
   if (!checkRateLimit(ip).allowed) {
     return new Response("Too many requests", { status: 429 });
   }
 
   const session = await auth();
-  const { messages, conversationId }: { messages: UIMessage[]; conversationId?: string } =
-    await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body || !Array.isArray(body.messages)) {
+    return new Response("Invalid request body", { status: 400 });
+  }
+  const { messages, conversationId }: { messages: UIMessage[]; conversationId?: string } = body;
 
   // Security: if a conversationId is provided, verify ownership
   if (conversationId && session?.user?.id) {
@@ -196,34 +200,33 @@ export async function POST(req: Request) {
   const sessionTools = createTravelTools(session?.user?.id, session?.user?.email ?? undefined);
   const allTools = { ...mcpTools, ...sessionTools } as unknown as ToolSet;
 
-  let result;
-  try {
-    result = streamText({
-      model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
-      messages: [cachedSystemMessage, cachedSystemAck, dateMessage, dateAck, ...modelMessages],
-      tools: allTools,
-      maxOutputTokens: 600,  // Increased from 350 — prevents cut-off on booking confirmations
-      stopWhen: stepCountIs(4),
-      onStepFinish: async (step) => {
-        await handleStep(step);
-        // Log token usage per step so we can monitor cost
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const s = step as any;
-        if (s.usage) {
-          console.log(`[TOKENS] in: ${s.usage.promptTokens}, out: ${s.usage.completionTokens}`);
-        }
-      },
-    });
-  } catch (err) {
-    console.error("[chat] streamText error:", err);
-    return new Response("Internal server error", { status: 500 });
-  }
+  const result = streamText({
+    model: anthropic("claude-haiku-4-5-20251001"), // Haiku: ~12× cheaper than Sonnet
+    messages: [cachedSystemMessage, cachedSystemAck, dateMessage, dateAck, ...modelMessages],
+    tools: allTools,
+    maxOutputTokens: 600,
+    stopWhen: stepCountIs(4),
+    experimental_telemetry: {
+      isEnabled: true,
+      functionId: "travel-chat",
+    },
+    onStepFinish: async (step) => {
+      await handleStep(step);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const s = step as any;
+      if (s.usage) {
+        console.log(`[TOKENS] in: ${s.usage.promptTokens}, out: ${s.usage.completionTokens}`);
+      }
+    },
+  });
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ responseMessage }) => {
       await closeMcp();
       if (session?.user?.id && conversationId) {
-        await saveMessage(conversationId, "assistant", responseMessage);
+        await saveMessage(conversationId, "assistant", responseMessage).catch(err =>
+          console.error("[chat] saveMessage error:", err)
+        );
 
         if (messages.length === 1) {
           const userText = messages[0].parts
@@ -239,4 +242,4 @@ export async function POST(req: Request) {
       }
     },
   });
-}
+});

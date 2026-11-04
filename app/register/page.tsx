@@ -46,6 +46,8 @@ export default function RegisterPage() {
       });
       if (result?.error) { router.push("/login"); return; }
       router.push("/chat");
+    } catch {
+      setError("Something went wrong. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
