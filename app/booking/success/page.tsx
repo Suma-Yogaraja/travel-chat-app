@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Suspense } from "react";
 
@@ -16,6 +17,8 @@ interface BookingStatus {
 function SuccessContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("session_id");
+  const { status: authStatus } = useSession();
+  const isGuest = authStatus !== "authenticated";
   const [data, setData] = useState<BookingStatus>({ status: "pending" });
   const [attempts, setAttempts] = useState(0);
 
@@ -100,20 +103,32 @@ function SuccessContent() {
             <span className="text-white font-mono text-xs">{data.bookingRef}</span>
           </div>
         </div>
-        <div className="flex gap-3 w-full">
-          <Link
-            href="/chat/bookings"
-            className="flex-1 py-2.5 text-center rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"
-          >
-            My bookings
-          </Link>
-          <Link
-            href="/chat"
-            className="flex-1 py-2.5 text-center rounded-xl border border-[#1e1e1e] hover:bg-[#161616] text-[#888] text-sm transition-colors"
-          >
-            Back to chat
-          </Link>
-        </div>
+        {isGuest ? (
+          <div className="w-full space-y-3">
+            <p className="text-[#555] text-xs text-center">Save your booking ref — you'll need it to manage your booking in the chat.</p>
+            <Link
+              href="/chat/guest"
+              className="block w-full py-2.5 text-center rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"
+            >
+              Back to chat
+            </Link>
+          </div>
+        ) : (
+          <div className="flex gap-3 w-full">
+            <Link
+              href="/chat/bookings"
+              className="flex-1 py-2.5 text-center rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"
+            >
+              My bookings
+            </Link>
+            <Link
+              href="/chat"
+              className="flex-1 py-2.5 text-center rounded-xl border border-[#1e1e1e] hover:bg-[#161616] text-[#888] text-sm transition-colors"
+            >
+              Back to chat
+            </Link>
+          </div>
+        )}
       </div>
     );
   }
@@ -141,12 +156,12 @@ function SuccessContent() {
         </p>
       </div>
       <Link
-        href="/chat"
+        href={isGuest ? "/chat/guest" : "/chat"}
         className="w-full py-2.5 text-center rounded-xl border border-[#1e1e1e] hover:bg-[#161616] text-[#888] text-sm transition-colors"
       >
         Back to chat
       </Link>
-      {isTimeout && (
+      {isTimeout && !isGuest && (
         <Link
           href="/chat/bookings"
           className="text-blue-400 hover:text-blue-300 text-sm"
