@@ -93,7 +93,7 @@ export const flightOffers = pgTable("flight_offers", {
   provider:        text("provider").notNull(),              // "duffel" | "mock"
   providerOfferId: text("provider_offer_id"),               // Duffel offer ID, null for mock
   ownerUserId:     text("owner_user_id"),                   // null = unowned (guest)
-  guestSessionId:  text("guest_session_id"),                // future: cookie-based guest session
+  guestSessionId:  text("guest_session_id"),                // from HttpOnly cookie — enforced by validateOfferForCheckout
   origin:          text("origin").notNull(),
   destination:     text("destination").notNull(),
   departureAt:     timestamp("departure_at", { mode: "date", withTimezone: true }).notNull(),

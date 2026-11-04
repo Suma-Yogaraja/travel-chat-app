@@ -103,6 +103,9 @@ function SuccessContent() {
             <span className="text-white font-mono text-xs">{data.bookingRef}</span>
           </div>
         </div>
+        <p className="text-[#444] text-xs text-center leading-relaxed">
+          Note: this is a simulated booking. No real airline reservation has been issued.
+        </p>
         {isGuest ? (
           <div className="w-full space-y-3">
             <p className="text-[#555] text-xs text-center">Save your booking ref — you'll need it to manage your booking in the chat.</p>

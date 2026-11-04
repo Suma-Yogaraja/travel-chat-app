@@ -79,7 +79,7 @@ describe("change_seat tool contract", () => {
 
 describe("tool list by user type", () => {
   it("guest tools include send_booking_otp and exclude auth-only tools", () => {
-    const tools = createTravelTools(undefined);
+    const tools = createTravelTools({});
     const keys = Object.keys(tools);
     expect(keys).toContain("send_booking_otp");
     expect(keys).toContain("create_checkout");
@@ -93,7 +93,7 @@ describe("tool list by user type", () => {
   });
 
   it("auth tools include create_checkout and exclude guest-only tools", () => {
-    const tools = createTravelTools("user-123");
+    const tools = createTravelTools({ userId: "user-123" });
     const keys = Object.keys(tools);
     expect(keys).toContain("create_checkout");
     expect(keys).toContain("get_booking");
@@ -104,5 +104,96 @@ describe("tool list by user type", () => {
     expect(keys).not.toContain("request_otp");
     expect(keys).not.toContain("verify_and_cancel");
     expect(keys).not.toContain("verify_and_change_seat");
+  });
+});
+
+// ── Pricing invariant: model cannot supply a price ────────────────────────────
+// The Zod schema is the enforcement layer — if priceUsd is accepted, the model
+// can pass any value and it will reach Stripe. These tests are the contract
+// that the invariant has not been silently regressed.
+
+describe("create_checkout schema — pricing invariant", () => {
+  function checkoutSchema() {
+    const tools = createTravelTools({ userId: "user-123" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (tools.create_checkout as any).inputSchema;
+  }
+
+  it("requires offerId (the server-side price handle)", () => {
+    const schema = checkoutSchema();
+    // A valid input must include offerId
+    const result = schema.safeParse({
+      offerId:       "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+      flightId:      "F1",
+      passengerName: "Alice",
+      seatNumber:    "5A",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects input without offerId", () => {
+    const schema = checkoutSchema();
+    const result = schema.safeParse({
+      flightId:      "F1",
+      passengerName: "Alice",
+      seatNumber:    "5A",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-UUID offerId", () => {
+    const schema = checkoutSchema();
+    const result = schema.safeParse({
+      offerId:       "not-a-uuid",
+      flightId:      "F1",
+      passengerName: "Alice",
+      seatNumber:    "5A",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("does not accept priceUsd (model must not supply price)", () => {
+    const schema = checkoutSchema();
+    // priceUsd should not be in the schema at all — extra fields are stripped
+    // by Zod's default behavior. Verify the field has no effect on parse.
+    const result = schema.safeParse({
+      offerId:       "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+      flightId:      "F1",
+      passengerName: "Alice",
+      seatNumber:    "5A",
+      priceUsd:      1, // attempt to supply a price
+    });
+    // Parse may succeed (Zod strips unknown keys) but the field must not appear
+    // in the output — it should be silently ignored, not passed to execute
+    if (result.success) {
+      expect((result.data as Record<string, unknown>).priceUsd).toBeUndefined();
+    }
+    // Either way: the field has no path to Stripe
+  });
+
+  it("accepts priceChangeToken for confirmed price changes", () => {
+    const schema = checkoutSchema();
+    const result = schema.safeParse({
+      offerId:          "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+      flightId:         "F1",
+      passengerName:    "Alice",
+      seatNumber:       "5A",
+      priceChangeToken: "some.token",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("search_flights flight shape — currency field", () => {
+  it("returned flights include a currency field", async () => {
+    const flights = await provider.searchFlights({
+      origin: "JFK", destination: "LAX", date: "2026-11-05",
+    });
+    expect(flights.length).toBeGreaterThan(0);
+    flights.forEach(f => {
+      expect(f).toHaveProperty("currency");
+      expect(typeof f.currency).toBe("string");
+      expect(f.currency.length).toBe(3);
+    });
   });
 });

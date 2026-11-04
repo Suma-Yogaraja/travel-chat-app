@@ -24,8 +24,10 @@ export async function POST(req: Request) {
     const session = event.data.object as Stripe.Checkout.Session;
     const booking = await getBookingByStripeSession(session.id);
 
-    // Idempotency: if already paid, skip
-    if (booking && booking.paymentStatus !== "paid") {
+    // Idempotency: only act on pending bookings.
+    // Both this check and the SQL WHERE guard must agree — the SQL is the
+    // final defence; this check prevents redundant DB writes + duplicate emails.
+    if (booking && booking.paymentStatus === "pending") {
       await confirmBooking(session.id);
 
       const email = booking.email ?? session.customer_email;
@@ -41,9 +43,13 @@ export async function POST(req: Request) {
     }
   } else if (event.type === "checkout.session.expired") {
     const session = event.data.object as Stripe.Checkout.Session;
-    await expireBooking(session.id).catch(err =>
-      console.error("[webhook] expire error:", err)
-    );
+    const booking = await getBookingByStripeSession(session.id);
+    // App-level guard mirrors the SQL WHERE paymentStatus = 'pending' guard —
+    // avoids a redundant DB write for sessions that completed or were never persisted.
+    // The SQL guard remains the final authority; this read is not atomic with the update.
+    if (booking?.paymentStatus === "pending") {
+      await expireBooking(session.id); // let errors propagate — Stripe retries on non-200
+    }
   }
 
   return new Response("ok");

@@ -54,16 +54,34 @@ export async function persistFlightOffer(
 }
 
 export type RevalidationResult =
-  | { valid: true;  priceMinor: number; currency: string; priceChanged: boolean; previousPriceMinor: number }
-  | { valid: false; reason: "expired" | "not_found" | "provider_unavailable" };
+  | { valid: true;  priceMinor: number; currency: string; priceChanged: boolean; previousPriceMinor: number; offer: FlightOffer }
+  | { valid: false; reason: "expired" | "not_found" | "unauthorized" | "provider_unavailable" };
 
 export async function validateOfferForCheckout(
   offerId: string,
   context: McpContext,
-): Promise<RevalidationResult & { offer?: FlightOffer }> {
+): Promise<RevalidationResult> {
   const offer = await getFlightOfferById(offerId);
   if (!offer) return { valid: false, reason: "not_found" };
   if (offer.expiresAt < new Date()) return { valid: false, reason: "expired" };
+
+  // Ownership invariant — both branches return not_found on mismatch to prevent
+  // offer-existence enumeration (never reveal which offers exist to unauthorized callers).
+  //
+  // Auth-user offers (ownerUserId !== null): only the owner may proceed.
+  // Guest offers (ownerUserId === null): only the guest whose session ID matches may proceed.
+  //   The guestSessionId comes from a server-set HttpOnly cookie — never from tool arguments.
+  const requesterId = context.userId ?? null;
+  if (offer.ownerUserId !== null) {
+    if (offer.ownerUserId !== requesterId) {
+      return { valid: false, reason: "not_found" };
+    }
+  } else {
+    const sessionId = context.guestSessionId ?? null;
+    if (!sessionId || offer.guestSessionId !== sessionId) {
+      return { valid: false, reason: "not_found" };
+    }
+  }
 
   // For Duffel offers, re-validate price with the provider before charging.
   // Fail closed: if Duffel is unreachable, never charge the stale stored price.
@@ -71,7 +89,12 @@ export async function validateOfferForCheckout(
     const live = await fetchDuffelOfferPrice(offer.providerOfferId);
     if (!live) return { valid: false, reason: "provider_unavailable" };
 
-    const liveMinor = toMinorUnits(parseFloat(live.total_amount), live.total_currency);
+    const rawAmount = parseFloat(live.total_amount);
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
+      return { valid: false, reason: "provider_unavailable" };
+    }
+
+    const liveMinor = toMinorUnits(rawAmount, live.total_currency);
     const priceChanged = liveMinor !== offer.priceMinor;
     return { valid: true, priceMinor: liveMinor, currency: live.total_currency, priceChanged, previousPriceMinor: offer.priceMinor, offer };
   }

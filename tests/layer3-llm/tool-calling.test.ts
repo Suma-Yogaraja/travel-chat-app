@@ -33,12 +33,12 @@ const travelTools = {
     }),
   }),
   create_checkout: tool({
-    description: "Create a Stripe payment session to book a flight for authenticated users",
+    description: "Create a Stripe payment session. Pass offerId from search results. NEVER pass a price — pricing is server-authoritative.",
     inputSchema: z.object({
-      flightId:      z.string(),
+      offerId:       z.string().uuid().describe("Offer UUID from search_flights"),
+      flightId:      z.string().describe("Human-readable flight ID for display only"),
       passengerName: z.string(),
       seatNumber:    z.string(),
-      priceUsd:      z.number(),
     }),
   }),
   get_booking: tool({
@@ -126,16 +126,25 @@ describe.skipIf(!runLlmTests)("Layer 3 — LLM tool selection", () => {
     expect(result.toolCalls.map(tc => tc.toolName)).toContain("get_flight_seats");
   }, 30_000);
 
-  test("booking request → calls create_checkout", async () => {
+  test("booking request → calls create_checkout with offerId not priceUsd", async () => {
+    // Pricing invariant: the model must pass the server-issued offerId,
+    // not a price it invented. If offerId is missing, Stripe would never be charged.
+    const OFFER_ID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+    const system = `${SYSTEM}\n\nSearch results for the user:\n[{"id":"F1","offerId":"${OFFER_ID}","price":199.99,"currency":"USD","origin":"JFK","destination":"LAX"}]`;
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
-      system: SYSTEM,
-      prompt: "Book flight F1 for Jane Smith in seat 12A, price is $299",
+      system,
+      prompt: "Book flight F1 for Jane Smith in seat 12A",
       tools: travelTools,
       stopWhen: stepCountIs(1),
     }));
     if (!result) return;
-    expect(result.toolCalls.map(tc => tc.toolName)).toContain("create_checkout");
+    const call = result.toolCalls.find(tc => tc.toolName === "create_checkout");
+    expect(call).toBeDefined();
+    // Model must carry the server-issued offer ID
+    expect((call?.input as { offerId: string }).offerId).toBe(OFFER_ID);
+    // Model must not supply a price — the schema strips it, but verify intent
+    expect((call?.input as Record<string, unknown>).priceUsd).toBeUndefined();
   }, 30_000);
 
   test("booking lookup → calls get_booking", async () => {

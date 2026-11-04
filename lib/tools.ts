@@ -1,7 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { randomUUID, randomInt } from "crypto";
-import type Stripe from "stripe";
 import {
   getBookingByRef, updateBookingSeat,
   getBookingByRefOnly, cancelBookingByRef, updateBookingSeatByRef,
@@ -11,8 +10,17 @@ import {
 import {
   sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
 } from "./email";
-import { withStripe } from "./stripe";
 import { validateOfferForCheckout, fromMinorUnits } from "./offers/offer-service";
+import { generatePriceChangeToken, verifyPriceChangeToken } from "./offers/price-confirmation";
+import type { PaymentProvider } from "./payment-provider";
+import { stripePaymentProvider } from "./stripe-payment-provider";
+
+export type TravelToolsContext = {
+  userId?: string;
+  userEmail?: string;
+  guestSessionId?: string;
+  paymentProvider?: PaymentProvider;
+};
 
 function guestBookingRef() {
   // 122 bits of cryptographically secure randomness — used as bearer credential for guests
@@ -29,7 +37,12 @@ function generateOtp() {
 // search_flights and get_flight_seats are served via the MCP server (lib/mcp-bridge.ts).
 // This file only defines session-aware tools that need auth/DB context.
 
-export function createTravelTools(userId: string | undefined, userEmail?: string) {
+export function createTravelTools({
+  userId,
+  userEmail,
+  guestSessionId,
+  paymentProvider = stripePaymentProvider,
+}: TravelToolsContext) {
   const tools = {
     send_booking_otp: tool({
       description: "Send a 6-digit verification code to a guest's email before booking. Must be called before create_checkout for guest users.",
@@ -216,40 +229,55 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
         passengerName:      z.string().describe("Full name of the passenger"),
         seatNumber:         z.string().describe("Seat number e.g. 12A"),
         passengerEmail:     z.string().email().optional().describe("Required for guest bookings — email address"),
-        otp:                z.string().length(6).optional().describe("Required for guest bookings — 6-digit code sent to email"),
-        acceptedPriceMinor: z.number().int().optional().describe("Set only when confirming a price change — the new price in minor currency units the user has explicitly accepted"),
+        otp:              z.string().length(6).optional().describe("Required for guest bookings — 6-digit code sent to email"),
+        priceChangeToken: z.string().optional().describe("Server-issued token returned from a previous PRICE_CHANGED error. Pass it back unchanged to confirm the user accepted the new price."),
       }),
-      execute: async ({ offerId, flightId, passengerName, seatNumber, passengerEmail, otp, acceptedPriceMinor }) => {
+      execute: async ({ offerId, flightId, passengerName, seatNumber, passengerEmail, otp, priceChangeToken }) => {
         // Validate offer and re-check price with provider. Fail closed: if Duffel is
         // unreachable, return an error rather than charging a potentially stale price.
-        const context = { userId };
+        const context = { userId, guestSessionId };
         const validation = await validateOfferForCheckout(offerId, context);
 
         if (!validation.valid) {
-          if (validation.reason === "not_found")          return { error: "Offer not found. Please search for flights again." };
-          if (validation.reason === "expired")            return { error: "This offer has expired. Please search for flights again to get current pricing." };
+          if (validation.reason === "not_found")            return { error: "Offer not found. Please search for flights again." };
+          if (validation.reason === "expired")              return { error: "This offer has expired. Please search for flights again to get current pricing." };
           if (validation.reason === "provider_unavailable") return { error: "Unable to verify pricing with the airline. Please try again in a moment." };
+          // "unauthorized" maps to not_found (already returned above via same path)
+          return { error: "Offer not found. Please search for flights again." };
         }
 
-        // TypeScript narrowing — validation.valid is true here
-        const { priceMinor, currency, priceChanged, previousPriceMinor, offer } = validation as Extract<typeof validation, { valid: true }> & { offer: NonNullable<typeof validation["offer"]> };
+        const { priceMinor, currency, priceChanged, previousPriceMinor } = validation;
 
         if (priceChanged) {
-          // If the user already confirmed the new price, check it matches
-          if (acceptedPriceMinor !== undefined) {
-            if (acceptedPriceMinor !== priceMinor) {
-              return { error: "Price confirmation mismatch. Please restart the booking." };
+          if (priceChangeToken) {
+            // Verify the token is bound to this exact offer, freshly-validated price,
+            // currency, and user. Prevents replay across offers, users, or time windows.
+            const result = verifyPriceChangeToken(priceChangeToken, {
+              offerId,
+              priceMinor,
+              currency,
+              userId: userId ?? null,
+            });
+            if (!result.valid) {
+              return { error: "Price confirmation is invalid or expired. Please restart the booking." };
             }
-            // Accepted — fall through to checkout creation
+            // Verified — fall through to checkout creation at the confirmed price
           } else {
+            // Issue a server-signed token the model must return for the user to confirm
+            const token = generatePriceChangeToken({
+              offerId,
+              priceMinor,
+              currency,
+              userId: userId ?? null,
+            });
             const previousPriceDisplay = fromMinorUnits(previousPriceMinor, currency);
             const currentPriceDisplay  = fromMinorUnits(priceMinor, currency);
             return {
               error: "PRICE_CHANGED",
-              previousPriceUsd: previousPriceDisplay,
-              currentPriceUsd:  currentPriceDisplay,
-              acceptedPriceMinor: priceMinor,
-              message: `The price has changed from $${previousPriceDisplay} to $${currentPriceDisplay} ${currency}. If the user confirms, call create_checkout again with acceptedPriceMinor: ${priceMinor}.`,
+              previousPriceUsd:  previousPriceDisplay,
+              currentPriceUsd:   currentPriceDisplay,
+              priceChangeToken:  token,
+              message: `The price has changed from $${previousPriceDisplay} to $${currentPriceDisplay} ${currency}. Tell the user the new price and ask them to confirm. If they accept, call create_checkout again with the priceChangeToken included.`,
             };
           }
         }
@@ -275,32 +303,34 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
 
         const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
         const priceUsdDisplay = fromMinorUnits(priceMinor, currency);
+        const baseUrl = process.env.NEXTAUTH_URL ?? "";
 
-        let session: Awaited<ReturnType<typeof import("stripe")["default"]["prototype"]["checkout"]["sessions"]["create"]>>;
+        let sessionId: string;
+        let checkoutUrl: string;
         try {
-          session = await withStripe(stripe =>
-            stripe.checkout.sessions.create({
-              mode: "payment",
-              line_items: [{
-                price_data: {
-                  currency: currency.toLowerCase(),
-                  product_data: {
-                    name: `Flight ${flightId} — Seat ${seatNumber}`,
-                    description: `Passenger: ${passengerName}`,
-                  },
-                  unit_amount: priceMinor, // server-authoritative minor units
-                },
-                quantity: 1,
-              }],
-              success_url: `${process.env.NEXTAUTH_URL}/booking/success?session_id={CHECKOUT_SESSION_ID}`,
-              cancel_url: `${process.env.NEXTAUTH_URL}${userId ? "/chat" : "/chat/guest"}`,
-              customer_email: effectiveEmail,
-              metadata: { bookingRef, userId: effectiveUserId, flightId, seatNumber, passengerName, offerId },
-              expires_at: Math.floor(expiresAt.getTime() / 1000),
-            })
-          );
+          const result = await paymentProvider.createCheckoutSession({
+            priceMinor,
+            currency,
+            flightId,
+            seatNumber,
+            passengerName,
+            customerEmail: effectiveEmail,
+            bookingRef,
+            userId: effectiveUserId,
+            offerId,
+            successUrl: `${baseUrl}/booking/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancelUrl: `${baseUrl}${userId ? "/chat" : "/chat/guest"}`,
+            expiresAt,
+          });
+          sessionId = result.id;
+          checkoutUrl = result.url;
         } catch (err) {
-          console.error("[create_checkout] Stripe error:", err);
+          console.error("[create_checkout] payment provider error:", err);
+          return { error: "Payment service unavailable. Please try again shortly." };
+        }
+
+        if (!checkoutUrl) {
+          console.error("[create_checkout] provider returned no checkout URL for session", sessionId);
           return { error: "Payment service unavailable. Please try again shortly." };
         }
 
@@ -311,12 +341,12 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
           passengerName,
           seat: seatNumber,
           email: effectiveEmail,
-          stripeSessionId: session.id,
+          stripeSessionId: sessionId,
           expiresAt,
         });
 
         return {
-          checkoutUrl: session.url!,
+          checkoutUrl,
           bookingRef,
           priceUsd: priceUsdDisplay,
           flightId,

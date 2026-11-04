@@ -8,6 +8,8 @@ import { saveMessage, getConversation, updateConversationTitle } from "@/lib/db/
 import { createLoggingHook } from "@/lib/ai-hooks";
 import { createTravelTools } from "@/lib/tools";
 import { connectMcpTools } from "@/lib/mcp-bridge";
+import { getOrCreateGuestSession } from "@/lib/guest-session";
+import { searchFlightsPlaceholder } from "@/lib/chat-history";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiHandler } from "@/lib/api-handler";
 import { langfuseProcessor } from "@/lib/langfuse-processor";
@@ -83,16 +85,7 @@ export const POST = apiHandler(async (req: Request) => {
     let summary: string;
     if (toolName === "get_flight_seats") summary = "[Seat map already shown to user]";
     else if (toolName === "search_flights") {
-      // Preserve offer IDs so Claude can pass them to create_checkout in a later turn
-      const offerMap = Array.isArray(output)
-        ? (output as Array<Record<string, unknown>>)
-            .filter(f => f.offerId)
-            .map(f => `${f.id}=${f.offerId}`)
-            .join(", ")
-        : "";
-      summary = offerMap
-        ? `[Flights shown. Offer IDs: ${offerMap}]`
-        : "[Flight results already shown to user]";
+      summary = searchFlightsPlaceholder(output);
     }
     else if (toolName === "get_booking" || toolName === "get_guest_booking")
       summary = `[Booking on file: ref=${o.bookingRef ?? o.bookingId}, flight=${o.flightId}, seat=${o.seat}]`;
@@ -136,10 +129,21 @@ export const POST = apiHandler(async (req: Request) => {
 
   const fullSystem = `${STATIC_SYSTEM}\n\n${dynamicContext}`;
 
+  // For guest requests, read the existing guest-session cookie or issue a new one.
+  // The session ID ties every offer persisted during this search to the same guest,
+  // so checkout can verify ownership without accepting anything from the model.
+  let guestSessionId: string | undefined;
+  let guestSetCookie: string | undefined;
+  if (isGuest) {
+    const gs = getOrCreateGuestSession(req);
+    guestSessionId = gs.guestSessionId;
+    guestSetCookie = gs.setCookie;
+  }
+
   // Connect MCP server in-process — provides search_flights + get_flight_seats.
-  // Pass userId so search_flights wrappers associate persisted offers with the right owner.
-  const { tools: mcpTools, close: closeMcp } = await connectMcpTools({ userId: session?.user?.id });
-  const sessionTools = createTravelTools(session?.user?.id, session?.user?.email ?? undefined);
+  // Pass userId / guestSessionId so search_flights wrappers bind persisted offers to the right principal.
+  const { tools: mcpTools, close: closeMcp } = await connectMcpTools({ userId: session?.user?.id, guestSessionId });
+  const sessionTools = createTravelTools({ userId: session?.user?.id, userEmail: session?.user?.email ?? undefined, guestSessionId });
   const allTools = { ...mcpTools, ...sessionTools } as unknown as ToolSet;
 
   const result = streamText({
@@ -161,6 +165,7 @@ export const POST = apiHandler(async (req: Request) => {
   });
 
   return result.toUIMessageStreamResponse({
+    headers: guestSetCookie ? { "Set-Cookie": guestSetCookie } : undefined,
     onFinish: async ({ responseMessage }) => {
       // Flush OTel spans to Langfuse before the serverless instance is frozen.
       await langfuseProcessor.forceFlush();

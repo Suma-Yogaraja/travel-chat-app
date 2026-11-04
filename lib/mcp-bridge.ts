@@ -61,7 +61,7 @@ async function callMcpTool(
 
 export type McpContext = {
   userId?: string;
-  guestSessionId?: string; // future: stable cookie-based guest session identity
+  guestSessionId?: string; // from HttpOnly cookie — never accepted from tool arguments
 };
 
 // Returns request-scoped tool wrappers that close over the immutable context.
