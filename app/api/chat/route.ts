@@ -62,7 +62,7 @@ export const POST = apiHandler(async (req: Request) => {
   // still knows what was booked without carrying the full object.
   const TRIM_TOOLS = new Set([
     "get_flight_seats", "search_flights",
-    "book_flight", "get_booking", "get_guest_booking", "change_seat",
+    "get_booking", "get_guest_booking", "change_seat",
     "create_checkout",
   ]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,7 +83,6 @@ export const POST = apiHandler(async (req: Request) => {
     let summary: string;
     if (toolName === "get_flight_seats") summary = "[Seat map already shown to user]";
     else if (toolName === "search_flights") summary = "[Flight results already shown to user]";
-    else if (toolName === "book_flight") summary = `[Booking confirmed: ref=${o.bookingId ?? o.bookingRef}, flight=${o.flightId}, seat=${o.seat}]`;
     else if (toolName === "get_booking" || toolName === "get_guest_booking")
       summary = `[Booking on file: ref=${o.bookingRef ?? o.bookingId}, flight=${o.flightId}, seat=${o.seat}]`;
     else if (toolName === "change_seat") summary = `[Seat changed to ${o.seat ?? "new seat"}]`;
@@ -120,7 +119,7 @@ export const POST = apiHandler(async (req: Request) => {
 
   const isGuest = !session?.user?.id;
   const authContext = isGuest
-    ? "CURRENT USER: Guest (not signed in). Before booking, call send_booking_otp with their email, wait for them to confirm the code, then call book_flight with the otp included. Do NOT ask whether they are signed in — you already know they are not."
+    ? "CURRENT USER: Guest (not signed in). Before booking, call send_booking_otp with their email, wait for them to confirm the OTP, then call create_checkout with passengerEmail and otp included. Do NOT ask whether they are signed in — you already know they are not."
     : "CURRENT USER: Signed in. Do not ask for email or auth status.";
   const dynamicContext = `${authContext}\n\nToday's date is ${new Date().toISOString().slice(0, 10)}. Use this to resolve relative dates like "today", "tomorrow", or "next Friday" into YYYY-MM-DD format.`;
 
