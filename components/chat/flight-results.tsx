@@ -10,11 +10,12 @@ interface Flight {
   price: number;
   aircraft: string;
   availableSeats: number;
+  offerId?: string; // UUID from server — present after search_flights persists the offer
 }
 
 interface FlightResultsProps {
   flights: Flight[];
-  onSelectFlight: (flightId: string) => void;
+  onSelectFlight: (flightId: string, offerId: string | undefined) => void;
 }
 
 function formatDuration(minutes: number) {
@@ -37,7 +38,7 @@ export function FlightResults({ flights, onSelectFlight }: FlightResultsProps) {
       {flights.map(flight => (
         <button
           key={flight.id}
-          onClick={() => onSelectFlight(flight.id)}
+          onClick={() => onSelectFlight(flight.id, flight.offerId)}
           className="w-full text-left rounded-xl border border-[#1e1e1e] bg-[#0f0f0f] px-4 py-4 hover:border-[#2a2a2a] hover:bg-[#141414] transition-all group"
         >
           <div className="flex items-center justify-between gap-4">

@@ -114,6 +114,7 @@ export class AmadeusProvider implements FlightProvider {
         arrivalTime: lastSeg.arrival.at.split("T")[1].slice(0, 5),
         durationMinutes: parseIsoDuration(itin.duration),
         price: parseFloat(offer.price.grandTotal ?? offer.price.total ?? "0"),
+        currency: offer.price.currency ?? "USD",
         aircraft: aircraftLabel,
         availableSeats: offer.numberOfBookableSeats,
       };

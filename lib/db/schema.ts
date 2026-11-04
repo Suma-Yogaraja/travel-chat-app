@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, json, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, integer, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id:            text("id").primaryKey(),
@@ -49,7 +49,7 @@ export const messages = pgTable("messages", {
   role:           text("role").notNull(), // "user" | "assistant" | "tool"
   // JSONB: stores the full CoreMessage object (text + tool calls + tool results)
   // Plain text would lose tool call history and break conversation resumption
-  content:        json("content").notNull(),
+  content:        jsonb("content").notNull(),
   createdAt:      timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
@@ -86,4 +86,21 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   tokenHash: text("token_hash").notNull().unique(),
   expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
   usedAt:    timestamp("used_at", { mode: "date" }),
+});
+
+export const flightOffers = pgTable("flight_offers", {
+  id:              uuid("id").primaryKey().defaultRandom(),
+  provider:        text("provider").notNull(),              // "duffel" | "mock"
+  providerOfferId: text("provider_offer_id"),               // Duffel offer ID, null for mock
+  ownerUserId:     text("owner_user_id"),                   // null = unowned (guest)
+  guestSessionId:  text("guest_session_id"),                // future: cookie-based guest session
+  origin:          text("origin").notNull(),
+  destination:     text("destination").notNull(),
+  departureAt:     timestamp("departure_at", { mode: "date", withTimezone: true }).notNull(),
+  cabinClass:      text("cabin_class").notNull().default("economy"),
+  segments:        jsonb("segments").notNull(),              // full flight data for display/audit
+  priceMinor:      integer("price_minor").notNull(),         // e.g. 15999 for $159.99 USD
+  currency:        text("currency").notNull().default("USD"),
+  expiresAt:       timestamp("expires_at", { mode: "date", withTimezone: true }).notNull(),
+  createdAt:       timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });

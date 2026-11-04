@@ -7,8 +7,10 @@ export interface Flight {
   arrivalTime: string;
   durationMinutes: number;
   price: number;
+  currency: string;
   aircraft: string;
   availableSeats: number;
+  providerOfferId?: string; // Duffel offer ID, undefined for mock
 }
 
 export interface Seat {

@@ -82,7 +82,18 @@ export const POST = apiHandler(async (req: Request) => {
     const o = (output && typeof output === "object" ? output : {}) as Record<string, any>;
     let summary: string;
     if (toolName === "get_flight_seats") summary = "[Seat map already shown to user]";
-    else if (toolName === "search_flights") summary = "[Flight results already shown to user]";
+    else if (toolName === "search_flights") {
+      // Preserve offer IDs so Claude can pass them to create_checkout in a later turn
+      const offerMap = Array.isArray(output)
+        ? (output as Array<Record<string, unknown>>)
+            .filter(f => f.offerId)
+            .map(f => `${f.id}=${f.offerId}`)
+            .join(", ")
+        : "";
+      summary = offerMap
+        ? `[Flights shown. Offer IDs: ${offerMap}]`
+        : "[Flight results already shown to user]";
+    }
     else if (toolName === "get_booking" || toolName === "get_guest_booking")
       summary = `[Booking on file: ref=${o.bookingRef ?? o.bookingId}, flight=${o.flightId}, seat=${o.seat}]`;
     else if (toolName === "change_seat") summary = `[Seat changed to ${o.seat ?? "new seat"}]`;
@@ -125,8 +136,9 @@ export const POST = apiHandler(async (req: Request) => {
 
   const fullSystem = `${STATIC_SYSTEM}\n\n${dynamicContext}`;
 
-  // Connect MCP server in-process — provides search_flights + get_flight_seats
-  const { tools: mcpTools, close: closeMcp } = await connectMcpTools();
+  // Connect MCP server in-process — provides search_flights + get_flight_seats.
+  // Pass userId so search_flights wrappers associate persisted offers with the right owner.
+  const { tools: mcpTools, close: closeMcp } = await connectMcpTools({ userId: session?.user?.id });
   const sessionTools = createTravelTools(session?.user?.id, session?.user?.email ?? undefined);
   const allTools = { ...mcpTools, ...sessionTools } as unknown as ToolSet;
 

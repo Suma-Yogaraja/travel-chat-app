@@ -1,16 +1,16 @@
 import type { Flight, Seat, Booking, FlightProvider } from "./index";
 
 const FLIGHTS: Flight[] = [
-  { id: "F1",  origin: "JFK", destination: "LAX", date: "2026-11-05", departureTime: "06:00", arrivalTime: "09:30", durationMinutes: 330, price: 199, aircraft: "Boeing 737",  availableSeats: 12 },
-  { id: "F2",  origin: "JFK", destination: "LAX", date: "2026-11-05", departureTime: "10:00", arrivalTime: "13:45", durationMinutes: 345, price: 249, aircraft: "Airbus A320", availableSeats: 8  },
-  { id: "F3",  origin: "JFK", destination: "LAX", date: "2026-11-05", departureTime: "16:30", arrivalTime: "20:00", durationMinutes: 330, price: 179, aircraft: "Boeing 737",  availableSeats: 20 },
-  { id: "F4",  origin: "LAX", destination: "JFK", date: "2026-11-05", departureTime: "07:00", arrivalTime: "15:30", durationMinutes: 330, price: 209, aircraft: "Boeing 757",  availableSeats: 5  },
-  { id: "F5",  origin: "LAX", destination: "JFK", date: "2026-11-05", departureTime: "14:00", arrivalTime: "22:15", durationMinutes: 315, price: 189, aircraft: "Airbus A321", availableSeats: 15 },
-  { id: "F6",  origin: "JFK", destination: "ORD", date: "2026-11-05", departureTime: "08:00", arrivalTime: "10:00", durationMinutes: 120, price: 129, aircraft: "Boeing 737",  availableSeats: 22 },
-  { id: "F7",  origin: "ORD", destination: "JFK", date: "2026-11-05", departureTime: "12:00", arrivalTime: "15:30", durationMinutes: 150, price: 139, aircraft: "Airbus A319", availableSeats: 18 },
-  { id: "F8",  origin: "JFK", destination: "MIA", date: "2026-11-05", departureTime: "09:00", arrivalTime: "12:00", durationMinutes: 180, price: 149, aircraft: "Boeing 737",  availableSeats: 10 },
-  { id: "F9",  origin: "SFO", destination: "JFK", date: "2026-11-05", departureTime: "08:30", arrivalTime: "17:00", durationMinutes: 330, price: 229, aircraft: "Airbus A320", availableSeats: 7  },
-  { id: "F10", origin: "JFK", destination: "SFO", date: "2026-11-05", departureTime: "11:00", arrivalTime: "14:30", durationMinutes: 330, price: 219, aircraft: "Boeing 757",  availableSeats: 14 },
+  { id: "F1",  origin: "JFK", destination: "LAX", date: "2026-11-05", departureTime: "06:00", arrivalTime: "09:30", durationMinutes: 330, price: 199, currency: "USD", aircraft: "Boeing 737",  availableSeats: 12 },
+  { id: "F2",  origin: "JFK", destination: "LAX", date: "2026-11-05", departureTime: "10:00", arrivalTime: "13:45", durationMinutes: 345, price: 249, currency: "USD", aircraft: "Airbus A320", availableSeats: 8  },
+  { id: "F3",  origin: "JFK", destination: "LAX", date: "2026-11-05", departureTime: "16:30", arrivalTime: "20:00", durationMinutes: 330, price: 179, currency: "USD", aircraft: "Boeing 737",  availableSeats: 20 },
+  { id: "F4",  origin: "LAX", destination: "JFK", date: "2026-11-05", departureTime: "07:00", arrivalTime: "15:30", durationMinutes: 330, price: 209, currency: "USD", aircraft: "Boeing 757",  availableSeats: 5  },
+  { id: "F5",  origin: "LAX", destination: "JFK", date: "2026-11-05", departureTime: "14:00", arrivalTime: "22:15", durationMinutes: 315, price: 189, currency: "USD", aircraft: "Airbus A321", availableSeats: 15 },
+  { id: "F6",  origin: "JFK", destination: "ORD", date: "2026-11-05", departureTime: "08:00", arrivalTime: "10:00", durationMinutes: 120, price: 129, currency: "USD", aircraft: "Boeing 737",  availableSeats: 22 },
+  { id: "F7",  origin: "ORD", destination: "JFK", date: "2026-11-05", departureTime: "12:00", arrivalTime: "15:30", durationMinutes: 150, price: 139, currency: "USD", aircraft: "Airbus A319", availableSeats: 18 },
+  { id: "F8",  origin: "JFK", destination: "MIA", date: "2026-11-05", departureTime: "09:00", arrivalTime: "12:00", durationMinutes: 180, price: 149, currency: "USD", aircraft: "Boeing 737",  availableSeats: 10 },
+  { id: "F9",  origin: "SFO", destination: "JFK", date: "2026-11-05", departureTime: "08:30", arrivalTime: "17:00", durationMinutes: 330, price: 229, currency: "USD", aircraft: "Airbus A320", availableSeats: 7  },
+  { id: "F10", origin: "JFK", destination: "SFO", date: "2026-11-05", departureTime: "11:00", arrivalTime: "14:30", durationMinutes: 330, price: 219, currency: "USD", aircraft: "Boeing 757",  availableSeats: 14 },
 ];
 
 function buildSeatMap(flightId: string): Seat[] {

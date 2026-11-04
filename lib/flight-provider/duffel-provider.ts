@@ -115,6 +115,8 @@ export class DuffelProvider implements FlightProvider {
         arrivalTime: lastSeg.arriving_at.split("T")[1].slice(0, 5),
         durationMinutes: parseIsoDuration(slice.duration),
         price: parseFloat(offer.total_amount),
+        currency: offer.total_currency,
+        providerOfferId: offer.id,
         aircraft: aircraftLabel,
         // Duffel doesn't expose remaining seat count — 9 is a safe placeholder
         availableSeats: 9,

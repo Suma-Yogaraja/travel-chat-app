@@ -150,7 +150,13 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
                 <FlightResults
                   key={i}
                   flights={flights as Parameters<typeof FlightResults>[0]["flights"]}
-                  onSelectFlight={id => onSendMessage?.(`I'd like to book flight ${id}`)}
+                  onSelectFlight={(flightId, offerId) =>
+                    onSendMessage?.(
+                      offerId
+                        ? `I'd like to book flight ${flightId}. The offer ID is ${offerId}.`
+                        : `I'd like to book flight ${flightId}`
+                    )
+                  }
                 />
               );
             }
