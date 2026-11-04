@@ -44,7 +44,6 @@ A chat-based travel app where users search flights, book tickets, and change sea
 
 ## Model
 Currently using **Claude Haiku** (`claude-haiku-4-5-20251001`) via `@ai-sdk/anthropic`. Follows skill instructions reliably and supports prompt caching. To switch to Groq (free tier): swap import to `@ai-sdk/groq` and model to `groq("llama-3.3-70b-versatile")` — avoid `openai/gpt-oss-120b` which has an 8000 TPM limit too small for seat map + flight results.
-To switch back to Claude Haiku (more reliable tool calling): swap import to `@ai-sdk/anthropic` and model to `anthropic("claude-haiku-4-5-20251001")` in `app/api/chat/route.ts`, and restore the `cacheControl` prompt caching pattern.
 
 ## Cost optimisations in place
 - Tool result trimming: old seat map / flight search results replaced with one-line placeholders

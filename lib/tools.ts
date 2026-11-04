@@ -257,7 +257,7 @@ export function createTravelTools(userId: string | undefined, userEmail?: string
                 quantity: 1,
               }],
               success_url: `${process.env.NEXTAUTH_URL}/booking/success?session_id={CHECKOUT_SESSION_ID}`,
-              cancel_url: `${process.env.NEXTAUTH_URL}/chat`,
+              cancel_url: `${process.env.NEXTAUTH_URL}${userId ? "/chat" : "/chat/guest"}`,
               customer_email: effectiveEmail,
               metadata: { bookingRef, userId: effectiveUserId, flightId, seatNumber, passengerName },
               expires_at: Math.floor(expiresAt.getTime() / 1000),

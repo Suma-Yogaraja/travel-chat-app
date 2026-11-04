@@ -12,8 +12,8 @@ Built as a learning project to understand core AI engineering concepts: MCP serv
 
 - **Search flights** — ask in natural language, the AI calls the search tool automatically
 - **View seat maps** — interactive seat picker rendered directly in the chat
-- **Book tickets (guests)** — email OTP verification before booking to prove inbox ownership
-- **Pay for flights (authenticated)** — Stripe Checkout flow; webhook confirms payment before booking is saved
+- **Book tickets** — everyone pays via Stripe Checkout; guests verify email with OTP first, auth users book directly
+- **Pay securely** — webhook confirms payment before booking is saved; Pay button appears in chat
 - **Change seats** — update your seat on any existing booking
 - **Cancel bookings** — cancel from the My Bookings page
 - **Guest mode** — chat without signing in; bookings saved with a GS- reference
@@ -25,7 +25,7 @@ Built as a learning project to understand core AI engineering concepts: MCP serv
 |---|---|
 | Framework | Next.js 16 App Router |
 | AI | Vercel AI SDK v7 |
-| Model | Groq `llama-3.3-70b-versatile` (swap to Claude Haiku in `app/api/chat/route.ts`) |
+| Model | Claude Haiku `claude-haiku-4-5-20251001` via `@ai-sdk/anthropic` |
 | MCP | `@modelcontextprotocol/sdk` (InMemoryTransport) |
 | Auth | NextAuth v5 — GitHub OAuth, Google OAuth, Credentials |
 | Database | Neon Postgres |
@@ -106,7 +106,7 @@ travel-chat-app/
 │   ├── email.ts                     # Nodemailer helpers (booking confirm, OTP, reset)
 │   ├── stripe.ts                    # Stripe client singleton + circuit breaker + live key guard
 │   ├── rate-limit.ts                # Sliding-window rate limiter (20 req/min per IP)
-│   ├── tools.ts                     # Session-aware tools: create_checkout (auth), book_flight + OTP (guest)
+│   ├── tools.ts                     # Session-aware tools: create_checkout (auth+guest), OTP tools (guest), get_booking, change_seat
 │   ├── mcp-bridge.ts                # Connects MCP server in-process
 │   ├── langfuse-processor.ts        # Singleton LangfuseSpanProcessor
 │   ├── db/
@@ -167,7 +167,7 @@ cp .env.local.example .env.local
 ```
 
 Fill in:
-- `GROQ_API_KEY` — from [console.groq.com](https://console.groq.com) (free tier)
+- `ANTHROPIC_API_KEY` — from [console.anthropic.com](https://console.anthropic.com)
 - `DATABASE_URL` — Neon Postgres connection string from [neon.tech](https://neon.tech)
 - `NEXTAUTH_SECRET` — run `openssl rand -base64 32`
 - `NEXTAUTH_URL` — `http://localhost:3002` in development
@@ -209,7 +209,7 @@ Copy the printed `whsec_...` key into `STRIPE_WEBHOOK_SECRET`.
 npx vitest run
 ```
 
-Layer 3 (LLM) tests require `ANTHROPIC_API_KEY` and are skipped gracefully otherwise.
+Layer 3 (LLM) tests require `ANTHROPIC_API_KEY` **and** `RUN_LLM_TESTS=1` — they cost real credits so they are opt-in.
 
 ## How it works
 
@@ -217,22 +217,22 @@ Layer 3 (LLM) tests require `ANTHROPIC_API_KEY` and are skipped gracefully other
 
 **Authenticated mode** (`/chat/[id]`) — each message saved to Postgres as a full `UIMessage` JSONB object. Conversations truly resume because tool call history is preserved.
 
-**Payments** — authenticated users go through Stripe Checkout. Claude calls `create_checkout`, a Pay button appears in the chat. After payment, the Stripe webhook confirms the booking in the DB and sends a confirmation email. Guests skip payment entirely.
+**Payments** — both guests and authenticated users go through Stripe Checkout. Claude calls `create_checkout` (guests must pass their verified OTP), a Pay button appears in the chat. The Stripe webhook is the source of truth — it confirms the booking in the DB and sends a confirmation email. Cancelled or abandoned checkouts redirect back to the chat (not the login page).
 
 **Flight data** — Duffel sandbox is active by default (`FLIGHT_PROVIDER=duffel`). Most airlines in sandbox don't return seatmap data — the app generates a deterministic fallback layout so the seat picker always works. Set `FLIGHT_PROVIDER=mock` for offline development.
 
-## Switching back to Claude
+## Switching to Groq (free tier)
 
-Change one line in `app/api/chat/route.ts`:
+Change two lines in `app/api/chat/route.ts`:
 
 ```ts
 // From:
-import { groq } from "@ai-sdk/groq";
-model: groq("openai/gpt-oss-120b")
-
-// To:
 import { anthropic } from "@ai-sdk/anthropic";
 model: anthropic("claude-haiku-4-5-20251001")
+
+// To:
+import { groq } from "@ai-sdk/groq";
+model: groq("llama-3.3-70b-versatile")
 ```
 
-Claude follows skill instructions more reliably than Groq and supports prompt caching.
+Note: avoid `openai/gpt-oss-120b` — it has an 8000 TPM free-tier limit that seat maps exhaust. Claude follows skill instructions more reliably and is recommended.
