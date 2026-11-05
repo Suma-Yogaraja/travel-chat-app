@@ -244,6 +244,27 @@ TEST_DATABASE_URL=<neon-url> npx vitest run tests/integration
 
 **Flight data** — Duffel sandbox is active by default (`FLIGHT_PROVIDER=duffel`). Most airlines in sandbox don't return seatmap data — the app generates a deterministic fallback layout so the seat picker always works. Set `FLIGHT_PROVIDER=mock` for offline development.
 
+## Known limitations
+
+This is a learning project. The following are known issues that would need to be addressed before a production deployment.
+
+**`flightId` and `seat` are model-supplied**
+`create_checkout` accepts `flightId` and `seat` from the model without verifying them against the offer's flight data. The offer ID, price, and ownership are all server-validated — but a buggy or adversarial tool call could technically pay for one offer and record a different flight or seat. Fix: store the flightId in `flight_offers` at search time and validate at checkout.
+
+**In-memory rate limiting and OTP guards don't share state across instances**
+`lib/rate-limit.ts` and the OTP attempt counters in `lib/tools.ts` use `Map` objects on the Node.js heap. Each Vercel serverless instance has its own copy. Under load, the same IP can exceed the per-instance limit across multiple instances. Fix: replace with Redis or Upstash.
+
+**No tests for the security behavior added in the second review**
+Refund-on-cancel (both paths), OTP send throttle, login rate limiting, and the 128KB chat body cap are all untested. The contract tests cover happy paths; none exercise these guards. Fix: add layer-2 contract tests for each guard.
+
+**Login rate limit is silent**
+When credentials are rate-limited, `authorize` returns `null` — the user sees "Incorrect email or password" rather than a 429. NextAuth's Credentials provider doesn't expose the response code to the client. Fix: use NextAuth's `signIn` event or a custom credentials route.
+
+**Webhook body check runs after the body is read**
+The 65 KB cap in the Stripe webhook fires after `req.text()` has already loaded the full payload into memory. Vercel's 4.5 MB platform limit provides an outer bound. Fix: use a streaming body reader that stops at the byte limit.
+
+---
+
 ## Switching to Groq (free tier)
 
 Change two lines in `app/api/chat/route.ts`:
