@@ -117,6 +117,7 @@ export function PayButton({ checkoutUrl, priceUsd, bookingRef, flightId, seatNum
   }
 
   // --- Pending: show Pay button, soft warning if near expiry ---
+  // eslint-disable-next-line react-hooks/purity -- Date.now() is intentional for expiry UI hint
   const nearExpiry = expiresAt ? Date.now() > new Date(expiresAt).getTime() - 5 * 60 * 1000 : false;
 
   return (

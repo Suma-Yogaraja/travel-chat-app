@@ -1,5 +1,5 @@
 import { withStripe } from "./stripe";
-import type { CheckoutParams, PaymentProvider } from "./payment-provider";
+import type { PaymentProvider } from "./payment-provider";
 
 export const stripePaymentProvider: PaymentProvider = {
   async createCheckoutSession(params) {

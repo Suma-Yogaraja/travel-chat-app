@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: Type check + tests
+  ci:
+    name: Lint + type check + build + tests
     runs-on: ubuntu-latest
 
     steps:
@@ -25,9 +25,31 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      - name: Run tests (layer 1 + 2)
-        run: npx vitest run --reporter=verbose
+      - name: Lint
+        run: npx eslint . --ext .ts,.tsx --max-warnings 0
+
+      - name: Build
+        run: npm run build
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # ANTHROPIC_API_KEY is optional — layer 3 tests skip gracefully without it
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Dummy values so Next.js can resolve env vars at build time.
+          # Secrets are not needed for a build-only check.
+          NEXTAUTH_SECRET: ci-dummy-secret-not-used-in-tests
+          NEXTAUTH_URL: http://localhost:3000
+          DATABASE_URL: postgresql://ci:ci@localhost/ci
+          GITHUB_ID: ci-dummy
+          GITHUB_SECRET: ci-dummy
+          GOOGLE_CLIENT_ID: ci-dummy
+          GOOGLE_CLIENT_SECRET: ci-dummy
+          GMAIL_USER: ci@example.com
+          GMAIL_APP_PASSWORD: ci-dummy
+          STRIPE_SECRET_KEY: sk_test_ci_dummy_not_a_real_key
+          STRIPE_WEBHOOK_SECRET: whsec_ci_dummy
+          LANGFUSE_SECRET_KEY: sk-lf-ci-dummy
+          LANGFUSE_PUBLIC_KEY: pk-lf-ci-dummy
+          LANGFUSE_BASEURL: https://cloud.langfuse.com
+          FLIGHT_PROVIDER: mock
+
+      - name: Unit + contract tests (layer 1 + 2)
+        run: npx vitest run tests/layer1-tool-logic tests/layer2-mcp-contract --reporter=verbose
+        # Layer 3 LLM tests are opt-in (RUN_LLM_TESTS=1) — skipped in CI to avoid credit spend.
+        # Integration tests require TEST_DATABASE_URL (isolated Neon branch) — not set in CI.

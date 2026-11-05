@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // All mocks declared before the imports that use them.
 vi.mock("../../lib/offers/offer-service", () => ({
   validateOfferForCheckout: vi.fn(),
-  fromMinorUnits: (minor: number, _currency: string) => +(minor / 100).toFixed(2),
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  fromMinorUnits: (minor: number, currency: string) => +(minor / 100).toFixed(2),
 }));
 vi.mock("../../lib/offers/price-confirmation", () => ({
   generatePriceChangeToken: vi.fn().mockReturnValue("tok_price_change_abc"),

@@ -26,6 +26,7 @@ export default function NewChatPage() {
   // Auto-send if redirected from bookings page with a pre-filled query
   useEffect(() => {
     const q = searchParams.get("q");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: auto-send ?q= URL param on mount
     if (q) handleSend(q);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

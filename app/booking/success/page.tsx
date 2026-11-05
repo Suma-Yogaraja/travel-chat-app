@@ -108,7 +108,7 @@ function SuccessContent() {
         </p>
         {isGuest ? (
           <div className="w-full space-y-3">
-            <p className="text-[#555] text-xs text-center">Save your booking ref — you'll need it to manage your booking in the chat.</p>
+            <p className="text-[#555] text-xs text-center">Save your booking ref — you&apos;ll need it to manage your booking in the chat.</p>
             <Link
               href="/chat/guest"
               className="block w-full py-2.5 text-center rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"

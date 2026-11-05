@@ -1,5 +1,5 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
-import type { UIMessage, ToolSet } from "ai";
+import type { UIMessage, ToolSet, ModelMessage } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -68,9 +68,8 @@ export const POST = apiHandler(async (req: Request) => {
     "get_booking", "get_guest_booking", "change_seat",
     "create_checkout",
   ]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lastIdx: Record<string, number> = {};
-  rawMessages.forEach((msg: any, i: number) => {
+  rawMessages.forEach((msg: ModelMessage, i: number) => {
     if (msg.role !== "tool") return;
     for (const part of msg.content ?? []) {
       if (part.type === "tool-result" && TRIM_TOOLS.has(part.toolName)) {
@@ -79,7 +78,6 @@ export const POST = apiHandler(async (req: Request) => {
     }
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function placeholderFor(toolName: string, output: unknown): Record<string, string> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const o = (output && typeof output === "object" ? output : {}) as Record<string, any>;

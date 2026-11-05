@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { signOut } from "next-auth/react";
 import type { Session } from "next-auth";
 import { useState, useRef, useEffect } from "react";
@@ -25,7 +26,7 @@ export function UserMenu({ session }: { session: Session }) {
         className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-gray-800 transition-colors"
       >
         {user?.image ? (
-          <img src={user.image} alt="" className="h-7 w-7 rounded-full flex-shrink-0" />
+          <Image src={user.image} alt="" width={28} height={28} className="h-7 w-7 rounded-full flex-shrink-0" />
         ) : (
           <div className="h-7 w-7 rounded-full bg-blue-600 flex items-center justify-center text-xs font-semibold flex-shrink-0">
             {user?.name?.[0]?.toUpperCase() ?? "?"}
@@ -45,7 +46,7 @@ export function UserMenu({ session }: { session: Session }) {
           {/* Profile info */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800">
             {user?.image ? (
-              <img src={user.image} alt="" className="h-10 w-10 rounded-full flex-shrink-0" />
+              <Image src={user.image} alt="" width={40} height={40} className="h-10 w-10 rounded-full flex-shrink-0" />
             ) : (
               <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center text-sm font-semibold flex-shrink-0">
                 {user?.name?.[0]?.toUpperCase() ?? "?"}
