@@ -9,15 +9,15 @@ function VerifyEmailContent() {
   const router = useRouter();
   const token = searchParams.get("token") ?? "";
 
-  const [status, setStatus] = useState<"pending" | "success" | "error">("pending");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [status, setStatus] = useState<"pending" | "success" | "error">(() =>
+    token ? "pending" : "error"
+  );
+  const [errorMsg, setErrorMsg] = useState(() =>
+    token ? "" : "Invalid verification link. No token found."
+  );
 
   useEffect(() => {
-    if (!token) {
-      setStatus("error");
-      setErrorMsg("Invalid verification link. No token found.");
-      return;
-    }
+    if (!token) return;
 
     fetch("/api/auth/verify-email", {
       method: "POST",
