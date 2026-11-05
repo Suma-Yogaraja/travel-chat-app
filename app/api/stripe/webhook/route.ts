@@ -1,6 +1,7 @@
 import { getStripe } from "@/lib/stripe";
 import { getBookingByStripeSession, confirmBooking, expireBooking } from "@/lib/db/queries";
 import { sendBookingConfirmation } from "@/lib/email";
+import { logger } from "@/lib/logger";
 import type Stripe from "stripe";
 
 // Webhook must NOT parse the body — Stripe signature verification needs the raw bytes.
@@ -16,7 +17,7 @@ export async function POST(req: Request) {
   try {
     event = getStripe().webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET!);
   } catch (err) {
-    console.error("[webhook] signature verification failed:", err);
+    logger.warn("webhook_sig_failed", { error: logger.err(err) });
     return new Response("Invalid signature", { status: 400 });
   }
 
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
             bookingRef: booking.bookingRef,
             flightId: booking.flightId,
             seat: booking.seat,
-          }).catch(err => console.error("[webhook] confirmation email error:", err));
+          }).catch(err => logger.error("webhook_email_error", { bookingRef: booking.bookingRef, error: logger.err(err) }));
         }
       }
     }

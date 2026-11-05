@@ -14,6 +14,7 @@ import { validateOfferForCheckout, fromMinorUnits } from "./offers/offer-service
 import { generatePriceChangeToken, verifyPriceChangeToken } from "./offers/price-confirmation";
 import type { PaymentProvider } from "./payment-provider";
 import { stripePaymentProvider } from "./stripe-payment-provider";
+import { logger } from "./logger";
 
 export type TravelToolsContext = {
   userId?: string;
@@ -56,7 +57,7 @@ export function createTravelTools({
         try {
           await sendOtpEmail({ to: email, otp });
         } catch (err) {
-          console.error("[send_booking_otp] email error:", err);
+          logger.error("send_booking_otp_email_error", { error: logger.err(err) });
           return { error: "Failed to send verification email. Please try again." };
         }
         return { sent: true };
@@ -149,7 +150,7 @@ export function createTravelTools({
         try {
           await sendOtpEmail({ to: booking.email, bookingRef, otp });
         } catch (err) {
-          console.error("[request_otp] email error:", err);
+          logger.error("request_otp_email_error", { bookingRef, error: logger.err(err) });
           return { error: "Failed to send verification email. Please try again." };
         }
 
@@ -325,12 +326,12 @@ export function createTravelTools({
           sessionId = result.id;
           checkoutUrl = result.url;
         } catch (err) {
-          console.error("[create_checkout] payment provider error:", err);
+          logger.error("create_checkout_provider_error", { bookingRef, error: logger.err(err) });
           return { error: "Payment service unavailable. Please try again shortly." };
         }
 
         if (!checkoutUrl) {
-          console.error("[create_checkout] provider returned no checkout URL for session", sessionId);
+          logger.error("create_checkout_no_url", { bookingRef, sessionId });
           return { error: "Payment service unavailable. Please try again shortly." };
         }
 

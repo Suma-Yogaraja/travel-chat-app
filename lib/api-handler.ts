@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logger } from "./logger";
 
 export class AppError extends Error {
   constructor(public readonly message: string, public readonly status: number) {
@@ -19,7 +20,7 @@ export function apiHandler(handler: RouteHandler): RouteHandler {
         return NextResponse.json({ error: err.message }, { status: err.status });
       }
       const { pathname } = new URL(req.url);
-      console.error(`[API error] ${req.method} ${pathname}`, err);
+      logger.error("api_unhandled_error", { method: req.method, path: pathname, error: logger.err(err) });
       return new Response("Internal server error", { status: 500 });
     }
   };

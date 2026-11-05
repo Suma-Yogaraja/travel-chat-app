@@ -4,6 +4,7 @@ import { tool, jsonSchema } from "ai";
 import type { ToolSet } from "ai";
 import { createTravelMcpServer } from "@/mcp-server/index";
 import { persistFlightOffer } from "@/lib/offers/offer-service";
+import { logger } from "@/lib/logger";
 
 // Tools served via the MCP server — session-agnostic, read-only flight data.
 // Write operations and anything needing auth/session stay as direct tools in lib/tools.ts.
@@ -92,7 +93,7 @@ export async function connectMcpTools(
                 const offerId = await persistFlightOffer(flight, context);
                 return { ...flight, offerId };
               } catch (err) {
-                console.error("[mcp-bridge] offer persist error:", err);
+                logger.error("mcp_bridge_offer_persist_error", { error: logger.err(err) });
                 return flight; // degrade gracefully — flight still shown, offerId missing
               }
             })

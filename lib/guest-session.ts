@@ -16,8 +16,9 @@ export function getOrCreateGuestSession(req: Request): GuestSession {
   if (existing) return { guestSessionId: existing };
 
   const id = randomUUID();
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   const setCookie =
-    `${COOKIE_NAME}=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${MAX_AGE}`;
+    `${COOKIE_NAME}=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${MAX_AGE}${secure}`;
   return { guestSessionId: id, setCookie };
 }
 

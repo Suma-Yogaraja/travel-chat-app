@@ -1,16 +1,15 @@
 // Logging hooks for streamText — passed to onStepFinish and onFinish callbacks.
 // AI SDK v7: tool calls are on step.dynamicToolCalls (for MCP tools without static types)
 
+import { logger } from "./logger";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createLoggingHook(): (step: any) => void {
   return (step) => {
     const toolCalls = [...(step.toolCalls ?? []), ...(step.dynamicToolCalls ?? [])];
-    if (toolCalls.length > 0) {
-      toolCalls.forEach((tc: { toolName: string; input?: unknown; args?: unknown }) => {
-        console.log(`\n[TOOL CALLED] ${tc.toolName}`);
-        console.log("  Input:", JSON.stringify(tc.input ?? tc.args, null, 2));
-      });
-    }
+    toolCalls.forEach((tc: { toolName: string; input?: unknown; args?: unknown }) => {
+      logger.info("tool_called", { tool: tc.toolName });
+    });
   };
 }
 
@@ -18,9 +17,7 @@ export function createLoggingHook(): (step: any) => void {
 export function createTokenCountHook(): (event: any) => void {
   return (event) => {
     if (event?.usage) {
-      console.log(
-        `\n[TOKENS] prompt: ${event.usage.promptTokens}, completion: ${event.usage.completionTokens}`
-      );
+      logger.info("tokens", { in: event.usage.promptTokens, out: event.usage.completionTokens });
     }
   };
 }

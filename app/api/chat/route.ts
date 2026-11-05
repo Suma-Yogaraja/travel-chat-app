@@ -12,6 +12,7 @@ import { getOrCreateGuestSession } from "@/lib/guest-session";
 import { searchFlightsPlaceholder } from "@/lib/chat-history";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiHandler } from "@/lib/api-handler";
+import { logger } from "@/lib/logger";
 import { langfuseProcessor } from "@/lib/langfuse-processor";
 import { LangfuseVercelAiSdkIntegration } from "@langfuse/vercel-ai-sdk";
 
@@ -153,13 +154,17 @@ export const POST = apiHandler(async (req: Request) => {
     tools: allTools,
     maxOutputTokens: 600,
     stopWhen: stepCountIs(4),
-    telemetry: { isEnabled: true, functionId: "travel-chat", integrations: [langfuseIntegration] },
+    // recordInputs: false suppresses prompt messages and gen_ai.tool.call.arguments spans.
+    // Tool call args (incl. otp/passengerEmail) still appear in gen_ai.output.messages
+    // because those are model outputs. Full suppression requires recordOutputs: false,
+    // which removes all model response visibility — not worth the tradeoff here.
+    telemetry: { isEnabled: true, functionId: "travel-chat", recordInputs: false, integrations: [langfuseIntegration] },
     onStepFinish: async (step) => {
       await handleStep(step);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const s = step as any;
       if (s.usage) {
-        console.log(`[TOKENS] in: ${s.usage.promptTokens}, out: ${s.usage.completionTokens}`);
+        logger.info("tokens", { in: s.usage.promptTokens, out: s.usage.completionTokens });
       }
     },
   });
@@ -172,7 +177,7 @@ export const POST = apiHandler(async (req: Request) => {
       await closeMcp();
       if (session?.user?.id && conversationId) {
         await saveMessage(conversationId, "assistant", responseMessage).catch(err =>
-          console.error("[chat] saveMessage error:", err)
+          logger.error("chat_save_message_error", { conversationId, error: logger.err(err) })
         );
 
         if (messages.length === 1) {
@@ -184,7 +189,7 @@ export const POST = apiHandler(async (req: Request) => {
             model: anthropic("claude-haiku-4-5-20251001"),
             prompt: `Generate a short 4-6 word title for a travel chat that starts with this message: "${safeText}". Respond with ONLY the title, no quotes, no punctuation at the end, nothing else.`,
           }).then(({ text: title }) => updateConversationTitle(conversationId, title.trim()))
-            .catch(err => console.error("[title] error:", err));
+            .catch(err => logger.error("chat_title_error", { conversationId, error: logger.err(err) }));
         }
       }
     },
