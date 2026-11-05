@@ -6,7 +6,7 @@ vi.mock("../../lib/stripe", () => ({
 }));
 vi.mock("../../lib/db/queries", () => ({
   getBookingByStripeSession: vi.fn(),
-  confirmBooking:  vi.fn().mockResolvedValue(undefined),
+  confirmBooking:  vi.fn().mockResolvedValue(true),
   expireBooking:   vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../lib/email", () => ({
@@ -194,6 +194,23 @@ describe("duplicate webhook delivery — idempotency", () => {
 
     expect(mockConfirm).toHaveBeenCalledTimes(1);
     expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("concurrent delivery race: both pass app guard, only SQL winner sends email", async () => {
+    // Both handlers read the booking simultaneously and see paymentStatus='pending'.
+    // Both call confirmBooking. The SQL WHERE paymentStatus='pending' means only the
+    // first UPDATE wins (returns true). The loser gets false and must not send email.
+    setupStripe(completedEvent("cs_test_001"));
+    mockGetBooking.mockResolvedValue(makePendingBooking() as never);
+    mockConfirm
+      .mockResolvedValueOnce(true as never)   // first handler wins the SQL race
+      .mockResolvedValueOnce(false as never);  // second handler: 0 rows updated
+
+    await POST(makeRequest("{}"));
+    await POST(makeRequest("{}"));
+
+    expect(mockConfirm).toHaveBeenCalledTimes(2);   // both attempted the SQL update
+    expect(mockSendEmail).toHaveBeenCalledTimes(1); // only the winner sent the email
   });
 });
 

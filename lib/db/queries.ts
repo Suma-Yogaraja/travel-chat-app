@@ -287,15 +287,19 @@ export async function createPendingBooking(params: {
   return booking;
 }
 
-export async function confirmBooking(stripeSessionId: string) {
-  // Only transition pending → paid. A late completed event cannot re-open an expired booking.
-  await db
+// Returns true if this call actually performed the pending→paid transition,
+// false if the row was already confirmed or not found (concurrent delivery).
+// Callers must check the return value before sending confirmation email.
+export async function confirmBooking(stripeSessionId: string): Promise<boolean> {
+  const [row] = await db
     .update(bookings)
     .set({ paymentStatus: "paid", status: "confirmed", expiresAt: null })
     .where(and(
       eq(bookings.stripeSessionId, stripeSessionId),
       eq(bookings.paymentStatus, "pending"),
-    ));
+    ))
+    .returning({ id: bookings.id });
+  return !!row;
 }
 
 export async function expireBooking(stripeSessionId: string) {
