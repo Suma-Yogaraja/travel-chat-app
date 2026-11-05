@@ -7,6 +7,9 @@ import type Stripe from "stripe";
 // Webhook must NOT parse the body — Stripe signature verification needs the raw bytes.
 export async function POST(req: Request) {
   const body = await req.text();
+  if (body.length > 65_536) {
+    return new Response("Payload too large", { status: 413 });
+  }
   const sig = req.headers.get("stripe-signature");
 
   if (!sig) {

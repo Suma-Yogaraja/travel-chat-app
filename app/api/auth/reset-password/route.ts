@@ -30,4 +30,7 @@ export const POST = apiHandler(async (req) => {
   await updateUserPassword(row.userId, passwordHash);
 
   return NextResponse.json({ ok: true });
+}, {
+  rateLimit:    { maxRequests: 10, windowMs: 15 * 60 * 1000 }, // 10 per 15 min per IP
+  maxBodyBytes: 1024,
 });

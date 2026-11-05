@@ -42,4 +42,7 @@ export const POST = apiHandler(async (req) => {
   );
 
   return NextResponse.json({ ok: true }, { status: 201 });
+}, {
+  rateLimit:    { maxRequests: 10, windowMs: 15 * 60 * 1000 }, // 10 per 15 min per IP
+  maxBodyBytes: 2048,
 });
