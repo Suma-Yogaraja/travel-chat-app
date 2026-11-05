@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { randomUUID } from "crypto";
-import { getUserByEmail, createUserWithPassword } from "@/lib/db/queries";
-import { sendWelcomeEmail } from "@/lib/email";
+import { randomBytes, createHash, randomUUID } from "crypto";
+import { getUserByEmail, createUserWithPassword, saveEmailVerificationToken } from "@/lib/db/queries";
+import { sendVerificationEmail } from "@/lib/email";
 import { validatePassword } from "@/lib/password";
 import { apiHandler } from "@/lib/api-handler";
 import { logger } from "@/lib/logger";
@@ -35,10 +35,16 @@ export const POST = apiHandler(async (req) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  await createUserWithPassword({ id: randomUUID(), name, email, passwordHash });
+  const user = await createUserWithPassword({ id: randomUUID(), name, email, passwordHash });
 
-  sendWelcomeEmail({ to: email, name }).catch(err =>
-    logger.warn("register_welcome_email_error", { error: logger.err(err) })
+  const rawToken = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+  await saveEmailVerificationToken({ id: randomUUID(), userId: user.id, tokenHash, expiresAt });
+
+  const verifyLink = `${process.env.NEXTAUTH_URL}/verify-email?token=${rawToken}`;
+  sendVerificationEmail({ to: email, name, verifyLink }).catch(err =>
+    logger.warn("register_verification_email_error", { error: logger.err(err) })
   );
 
   return NextResponse.json({ ok: true }, { status: 201 });

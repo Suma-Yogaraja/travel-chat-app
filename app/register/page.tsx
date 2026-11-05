@@ -1,17 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { validatePassword } from "@/lib/password";
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", password: "", confirm: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   function set(field: string, value: string) {
     setForm(f => ({ ...f, [field]: value }));
@@ -38,19 +36,34 @@ export default function RegisterPage() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Registration failed"); return; }
-
-      const result = await signIn("credentials", {
-        email: form.email,
-        password: form.password,
-        redirect: false,
-      });
-      if (result?.error) { router.push("/login"); return; }
-      router.push("/chat");
+      setSubmitted(true);
     } catch {
       setError("Something went wrong. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
+  }
+
+  if (submitted) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-4">
+        <div className="w-full max-w-sm text-center space-y-4">
+          <h1 className="text-2xl font-semibold text-white">Check your inbox</h1>
+          <div className="rounded-xl border border-[#2a2a2a] bg-[#111] px-6 py-5 space-y-2">
+            <p className="text-sm text-gray-300">
+              We sent a verification link to <span className="text-white font-medium">{form.email}</span>.
+            </p>
+            <p className="text-sm text-gray-500">
+              Click the link to activate your account, then sign in. Check spam if you don&apos;t see it.
+            </p>
+          </div>
+          <p className="text-sm text-gray-600">
+            Already verified?{" "}
+            <Link href="/login" className="text-blue-400 hover:text-blue-300">Sign in</Link>
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

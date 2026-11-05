@@ -1,6 +1,6 @@
 import { eq, and, asc, desc, gt, isNull, ne } from "drizzle-orm";
 import { db } from "./index";
-import { conversations, messages, bookings, guestOtps, users, passwordResetTokens } from "./schema";
+import { conversations, messages, bookings, guestOtps, users, passwordResetTokens, emailVerificationTokens } from "./schema";
 import { randomUUID, createHash } from "crypto";
 
 function hashOtp(otp: string): string {
@@ -355,4 +355,36 @@ export async function getBookingByStripeSession(stripeSessionId: string) {
     .from(bookings)
     .where(eq(bookings.stripeSessionId, stripeSessionId));
   return row ?? null;
+}
+
+// --- Email verification ---
+
+export async function saveEmailVerificationToken(params: {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: Date;
+}) {
+  await db.insert(emailVerificationTokens).values(params);
+}
+
+export async function consumeEmailVerificationToken(tokenHash: string) {
+  const now = new Date();
+  const [row] = await db
+    .update(emailVerificationTokens)
+    .set({ usedAt: now })
+    .where(and(
+      eq(emailVerificationTokens.tokenHash, tokenHash),
+      gt(emailVerificationTokens.expiresAt, now),
+      isNull(emailVerificationTokens.usedAt),
+    ))
+    .returning();
+  return row ?? null;
+}
+
+export async function setEmailVerified(userId: string) {
+  await db
+    .update(users)
+    .set({ emailVerified: new Date() })
+    .where(eq(users.id, userId));
 }

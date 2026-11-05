@@ -96,6 +96,14 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   usedAt:    timestamp("used_at", { mode: "date" }),
 });
 
+export const emailVerificationTokens = pgTable("email_verification_tokens", {
+  id:        text("id").primaryKey(),
+  userId:    text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+  usedAt:    timestamp("used_at", { mode: "date" }),
+});
+
 export const flightOffers = pgTable("flight_offers", {
   id:              uuid("id").primaryKey().defaultRandom(),
   provider:        text("provider").notNull(),              // "duffel" | "mock"

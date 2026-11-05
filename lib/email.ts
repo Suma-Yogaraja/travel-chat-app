@@ -53,6 +53,12 @@ interface OtpParams {
   otp: string;
 }
 
+interface VerificationParams {
+  to: string;
+  name: string;
+  verifyLink: string;
+}
+
 interface PasswordResetParams {
   to: string;
   resetLink: string;
@@ -153,6 +159,24 @@ export async function sendOtpEmail(params: OtpParams) {
           <span style="font-size: 36px; font-weight: 700; letter-spacing: 8px; font-family: monospace;">${esc(otp)}</span>
         </div>
         <p style="color: #9ca3af; font-size: 12px;">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+export async function sendVerificationEmail(params: VerificationParams) {
+  const { to, name, verifyLink } = params;
+  await transporter.sendMail({
+    from: from(),
+    to,
+    subject: "Verify your TravelChat email address",
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="margin: 0 0 8px;">✈️ Welcome to TravelChat, ${esc(name)}!</h2>
+        <p style="color: #6b7280; margin: 0 0 24px;">Click the button below to verify your email address and activate your account.</p>
+        <a href="${verifyLink}" style="display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 14px; margin-bottom: 24px;">Verify email address</a>
+        <p style="color: #6b7280; font-size: 13px;">Or copy this link: <span style="font-family: monospace; word-break: break-all;">${esc(verifyLink)}</span></p>
+        <p style="color: #9ca3af; font-size: 12px; margin-top: 24px;">This link expires in 24 hours. If you didn&apos;t create a TravelChat account, you can safely ignore this email.</p>
       </div>
     `,
   });

@@ -55,7 +55,7 @@ export default function LoginPage() {
         redirect: false,
       });
       if (result?.error) {
-        setError("Incorrect email or password");
+        setError("unverified_or_wrong");
       } else {
         router.push("/chat");
       }
@@ -74,7 +74,15 @@ export default function LoginPage() {
           <p className="mt-2 text-sm text-gray-400">Save your conversations and pick up where you left off</p>
         </div>
 
-        {error && <p className="mb-4 text-sm text-red-400 text-center">{error}</p>}
+        {error === "unverified_or_wrong" && (
+          <div className="mb-4 text-center space-y-1">
+            <p className="text-sm text-red-400">Incorrect email or password</p>
+            <p className="text-xs text-gray-500">Just signed up? Verify your email first — check your inbox.</p>
+          </div>
+        )}
+        {error && error !== "unverified_or_wrong" && (
+          <p className="mb-4 text-sm text-red-400 text-center">{error}</p>
+        )}
 
         {/* Social sign-in */}
         <div className="space-y-3">
