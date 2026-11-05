@@ -25,8 +25,10 @@ const SKILLS_BASE = ["flight-search", "booking", "seat-management"]
   .map(name => readFileSync(join(process.cwd(), "skills", `${name}.md`), "utf-8"))
   .join("\n\n---\n\n");
 
-// Static portion of the system prompt — cached by Anthropic after the first request.
-// The dynamic portion (date + auth context) is appended per-request without caching.
+// Static portion of the system prompt — loaded once at module level to avoid repeated FS I/O.
+// Anthropic prompt caching requires explicit cache_control breakpoints; it does not happen
+// automatically. Add providerOptions per-message to opt in when that trade-off is worth it.
+// The dynamic portion (date + auth context) is appended per-request and must NOT be cached.
 const STATIC_SYSTEM = `You are a helpful travel assistant. You help users search for flights, book tickets, and manage their seats through conversation.\n\n${SKILLS_BASE}\n\nAlways be friendly and concise. If unsure, ask the user to clarify.`;
 
 export const POST = apiHandler(async (req: Request) => {
@@ -113,7 +115,28 @@ export const POST = apiHandler(async (req: Request) => {
 
   // Cap history at 30 model messages (~15 exchanges). Beyond that, old context
   // adds cost without helping — any travel booking fits within 15 turns.
-  const modelMessages = trimmedMessages.slice(-30);
+  const slicedMessages = trimmedMessages.slice(-30);
+
+  // After slicing, a tool-result message can be orphaned if its matching assistant
+  // tool-call message was cut off. The model errors on orphaned tool results, so
+  // filter them out by collecting every toolCallId still present in the slice.
+  const callIdsInSlice = new Set<string>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const msg of slicedMessages as any[]) {
+    if (msg.role !== "assistant") continue;
+    for (const part of msg.content ?? []) {
+      if (part.type === "tool-call") callIdsInSlice.add(part.toolCallId);
+    }
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const modelMessages = (slicedMessages as any[]).flatMap(msg => {
+    if (msg.role !== "tool") return [msg];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const content = (msg.content ?? []).filter((p: any) =>
+      p.type !== "tool-result" || callIdsInSlice.has(p.toolCallId)
+    );
+    return content.length > 0 ? [{ ...msg, content }] : [];
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function handleStep(step: any) {
