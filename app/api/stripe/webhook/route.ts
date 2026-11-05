@@ -25,10 +25,17 @@ export async function POST(req: Request) {
     const session = event.data.object as Stripe.Checkout.Session;
     const booking = await getBookingByStripeSession(session.id);
 
+    if (!booking) {
+      // Payment received but no booking row — likely a DB failure during create_checkout.
+      // Return 500 so Stripe retries. Manual investigation required if retries exhaust.
+      logger.error("webhook_booking_not_found", { stripeSessionId: session.id });
+      return new Response("Booking not found", { status: 500 });
+    }
+
     // Idempotency: only act on pending bookings.
     // Both this check and the SQL WHERE guard must agree — the SQL is the
     // final defence; this check prevents redundant DB writes + duplicate emails.
-    if (booking && booking.paymentStatus === "pending") {
+    if (booking.paymentStatus === "pending") {
       // confirmBooking returns true only if this handler won the SQL race
       // (UPDATE WHERE paymentStatus='pending' updated 1 row). A concurrent
       // delivery that also passed the app-level check will get false here and

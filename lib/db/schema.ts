@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, jsonb, integer, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, integer, uuid, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const users = pgTable("users", {
   id:            text("id").primaryKey(),
@@ -55,20 +56,27 @@ export const messages = pgTable("messages", {
 
 export const bookings = pgTable("bookings", {
   id:               text("id").primaryKey(),
-  // No FK — guest bookings use "gs-<timestamp>" as userId, not a real users.id
+  // No FK — guest bookings use "gs-<uuid>" as userId, not a real users.id
   userId:           text("user_id").notNull(),
   bookingRef:       text("booking_ref").notNull().unique(), // BK-... auth, GS-... guest
   flightId:         text("flight_id").notNull(),
+  offerId:          uuid("offer_id"),                       // audit link to flight_offers; null for pre-migration rows
   passengerName:    text("passenger_name").notNull(),
   seat:             text("seat").notNull(),
   email:            text("email"), // populated for guest bookings; auth users have email in users table
   status:           text("status").notNull().default("confirmed"),
-  // Stripe payment fields — null for guest (OTP-verified) bookings
+  // Stripe payment fields
   stripeSessionId:  text("stripe_session_id").unique(),
-  paymentStatus:    text("payment_status").notNull().default("paid"), // "pending" | "paid" | "expired" | "failed"
+  paymentStatus:    text("payment_status").notNull().default("pending"), // "pending" | "paid" | "expired" | "failed"
   expiresAt:        timestamp("expires_at", { mode: "date" }),
   createdAt:        timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-});
+}, (t) => [
+  // Prevents two confirmed bookings for the same seat on the same flight.
+  // confirmBooking sets status = 'confirmed'; the second one will throw a unique violation.
+  uniqueIndex("bookings_flight_seat_confirmed")
+    .on(t.flightId, t.seat)
+    .where(sql`${t.status} = 'confirmed'`),
+]);
 
 export const guestOtps = pgTable("guest_otps", {
   id:         text("id").primaryKey(),

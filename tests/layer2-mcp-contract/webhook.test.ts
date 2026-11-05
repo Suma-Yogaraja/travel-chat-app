@@ -173,12 +173,15 @@ describe("duplicate webhook delivery — idempotency", () => {
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
-  it("does not crash when booking is not found (session ID not in DB)", async () => {
+  it("returns 500 when booking is not found so Stripe retries delivery", async () => {
+    // A missing booking for a completed payment means the DB insert in create_checkout
+    // failed after the Stripe session was created — a data integrity error. Returning
+    // 500 triggers Stripe retries; if retries exhaust, manual investigation is required.
     setupStripe(completedEvent("cs_test_unknown"));
     mockGetBooking.mockResolvedValue(null as never);
 
     const res = await POST(makeRequest("{}"));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
     expect(mockConfirm).not.toHaveBeenCalled();
   });
 

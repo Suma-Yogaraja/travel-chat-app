@@ -21,16 +21,25 @@ vi.mock("../../lib/db/queries", () => ({
   saveBookingVerificationOtp:   vi.fn(),
   verifyAndConsumeBookingOtp:   vi.fn().mockResolvedValue({ id: "otp-row-1" }),
   createPendingBooking:         vi.fn().mockResolvedValue(undefined),
+  setBookingStripeSession:      vi.fn().mockResolvedValue(undefined),
+  deletePendingBooking:         vi.fn().mockResolvedValue(undefined),
 }));
 // Prevent the real Stripe singleton from initialising during tests.
 vi.mock("../../lib/stripe-payment-provider", () => ({
   stripePaymentProvider: { createCheckoutSession: vi.fn() },
 }));
+vi.mock("../../lib/stripe", () => ({
+  withStripe: vi.fn(),
+  getStripe:  vi.fn(),
+}));
 
 import { createTravelTools } from "../../lib/tools";
 import { validateOfferForCheckout } from "../../lib/offers/offer-service";
 import { generatePriceChangeToken, verifyPriceChangeToken } from "../../lib/offers/price-confirmation";
-import { createPendingBooking, verifyAndConsumeBookingOtp } from "../../lib/db/queries";
+import {
+  createPendingBooking, verifyAndConsumeBookingOtp,
+  setBookingStripeSession, deletePendingBooking,
+} from "../../lib/db/queries";
 import type { PaymentProvider } from "../../lib/payment-provider";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -38,10 +47,12 @@ import type { PaymentProvider } from "../../lib/payment-provider";
 const OFFER_ID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
 
 const mockValidate   = vi.mocked(validateOfferForCheckout);
-const mockCreateDb   = vi.mocked(createPendingBooking);
-const mockVerifyOtp  = vi.mocked(verifyAndConsumeBookingOtp);
-const mockGenToken   = vi.mocked(generatePriceChangeToken);
-const mockVerifyTok  = vi.mocked(verifyPriceChangeToken);
+const mockCreateDb      = vi.mocked(createPendingBooking);
+const mockSetSession    = vi.mocked(setBookingStripeSession);
+const mockDeleteDb      = vi.mocked(deletePendingBooking);
+const mockVerifyOtp     = vi.mocked(verifyAndConsumeBookingOtp);
+const mockGenToken      = vi.mocked(generatePriceChangeToken);
+const mockVerifyTok     = vi.mocked(verifyPriceChangeToken);
 
 function makeProvider(url = "https://checkout.stripe.com/pay/sess_abc123"): PaymentProvider & {
   createCheckoutSession: ReturnType<typeof vi.fn>;
@@ -108,7 +119,9 @@ describe("happy path — authenticated user", () => {
     );
   });
 
-  it("persists a pending booking with matching bookingRef after session creation", async () => {
+  it("persists a pending booking before Stripe session creation, then links the session ID", async () => {
+    // DB row is created first (without stripeSessionId) so a Stripe session always has
+    // a matching booking. The session ID is linked in a second UPDATE after Stripe succeeds.
     const provider = makeProvider();
     mockValidate.mockResolvedValue(validOffer() as never);
 
@@ -120,9 +133,12 @@ describe("happy path — authenticated user", () => {
         flightId:      "F1",
         seat:          "12A",
         passengerName: "Alice Smith",
-        stripeSessionId: "sess_abc123",
       })
     );
+    expect(mockCreateDb).toHaveBeenCalledWith(
+      expect.not.objectContaining({ stripeSessionId: expect.anything() })
+    );
+    expect(mockSetSession).toHaveBeenCalledWith(result.bookingRef, "sess_abc123");
   });
 });
 
@@ -261,6 +277,7 @@ describe("price-change flow", () => {
 
 describe("provider error handling", () => {
   it("returns user-facing error when provider throws (Stripe unavailable)", async () => {
+    // DB row is created before Stripe is called, so it must be cleaned up on failure.
     const provider = makeProvider();
     provider.createCheckoutSession.mockRejectedValueOnce(new Error("Stripe network error"));
     mockValidate.mockResolvedValue(validOffer() as never);
@@ -268,16 +285,19 @@ describe("provider error handling", () => {
     const result = await getCheckout({ userId: "user-alice", paymentProvider: provider })(baseInput());
 
     expect(result.error).toMatch(/payment service unavailable/i);
-    expect(mockCreateDb).not.toHaveBeenCalled();
+    expect(mockCreateDb).toHaveBeenCalled();      // DB row created first
+    expect(mockDeleteDb).toHaveBeenCalled();      // then cleaned up after Stripe failure
   });
 
   it("returns user-facing error when provider returns no checkout URL", async () => {
+    // Same cleanup path: DB row exists, then Stripe returns no URL → delete pending booking.
     const provider = makeProvider("");
     mockValidate.mockResolvedValue(validOffer() as never);
 
     const result = await getCheckout({ userId: "user-alice", paymentProvider: provider })(baseInput());
 
     expect(result.error).toMatch(/payment service unavailable/i);
-    expect(mockCreateDb).not.toHaveBeenCalled();
+    expect(mockCreateDb).toHaveBeenCalled();      // DB row created first
+    expect(mockDeleteDb).toHaveBeenCalled();      // then cleaned up
   });
 });

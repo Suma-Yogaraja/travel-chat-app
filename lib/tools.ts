@@ -5,8 +5,10 @@ import {
   getBookingByRef, updateBookingSeat,
   getBookingByRefOnly, cancelBookingByRef, updateBookingSeatByRef,
   saveGuestOtp, verifyAndConsumeOtp,
-  saveBookingVerificationOtp, verifyAndConsumeBookingOtp, createPendingBooking,
+  saveBookingVerificationOtp, verifyAndConsumeBookingOtp,
+  createPendingBooking, setBookingStripeSession, deletePendingBooking,
 } from "./db/queries";
+import { withStripe, getStripe } from "./stripe";
 import {
   sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
 } from "./email";
@@ -33,6 +35,29 @@ function guestUserId() {
 // crypto.randomInt is cryptographically secure — Math.random() is not
 function generateOtp() {
   return randomInt(100000, 1000000).toString();
+}
+
+// In-memory OTP attempt counters — per-process protection is sufficient for 6-digit OTPs.
+// Even across Vercel instances, 5 attempts × N instances still leaves ~1M/N guesses needed.
+const otpAttempts = new Map<string, { count: number; firstAt: number }>();
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_WINDOW_MS = 10 * 60 * 1000;
+
+function isOtpLocked(key: string): boolean {
+  const entry = otpAttempts.get(key);
+  if (!entry || Date.now() - entry.firstAt > OTP_WINDOW_MS) return false;
+  return entry.count >= OTP_MAX_ATTEMPTS;
+}
+
+function recordOtpAttempt(key: string, success: boolean) {
+  if (success) { otpAttempts.delete(key); return; }
+  const now = Date.now();
+  const entry = otpAttempts.get(key);
+  if (!entry || now - entry.firstAt > OTP_WINDOW_MS) {
+    otpAttempts.set(key, { count: 1, firstAt: now });
+  } else {
+    otpAttempts.set(key, { ...entry, count: entry.count + 1 });
+  }
 }
 
 // search_flights and get_flight_seats are served via the MCP server (lib/mcp-bridge.ts).
@@ -165,13 +190,33 @@ export function createTravelTools({
         otp:        z.string().describe("6-digit OTP from email"),
       }),
       execute: async ({ bookingRef, otp }) => {
+        const otpKey = `seat:${bookingRef}`;
+        if (isOtpLocked(otpKey)) return { error: "Too many invalid attempts. Please request a new OTP." };
         // Atomic verify + consume — single UPDATE prevents double-use
         const otpRow = await verifyAndConsumeOtp(bookingRef, otp);
+        recordOtpAttempt(otpKey, !!otpRow);
         if (!otpRow) return { error: "Invalid or expired OTP. Request a new one." };
 
         const booking = await getBookingByRefOnly(bookingRef);
         if (!booking) return { error: `Booking ${bookingRef} not found` };
         if (booking.status === "cancelled") return { error: "This booking is already cancelled" };
+
+        // Refund or expire the Stripe session before cancelling
+        if (booking.stripeSessionId) {
+          if (booking.paymentStatus === "paid") {
+            try {
+              const session = await getStripe().checkout.sessions.retrieve(booking.stripeSessionId);
+              if (typeof session.payment_intent === "string") {
+                await withStripe(stripe => stripe.refunds.create({ payment_intent: session.payment_intent as string }));
+              }
+            } catch (err) {
+              logger.error("cancel_refund_error", { bookingRef, error: logger.err(err) });
+              // Proceed with DB cancellation — refund to be resolved manually if Stripe call failed
+            }
+          } else if (booking.paymentStatus === "pending") {
+            await withStripe(stripe => stripe.checkout.sessions.expire(booking.stripeSessionId!)).catch(() => {});
+          }
+        }
 
         await cancelBookingByRef(bookingRef);
 
@@ -197,8 +242,11 @@ export function createTravelTools({
         otp:        z.string().describe("6-digit OTP from email"),
       }),
       execute: async ({ bookingRef, newSeat, otp }) => {
+        const otpKey = `seat:${bookingRef}`;
+        if (isOtpLocked(otpKey)) return { error: "Too many invalid attempts. Please request a new OTP." };
         // Atomic verify + consume — single UPDATE prevents double-use
         const otpRow = await verifyAndConsumeOtp(bookingRef, otp);
+        recordOtpAttempt(otpKey, !!otpRow);
         if (!otpRow) return { error: "Invalid or expired OTP. Request a new one." };
 
         const booking = await getBookingByRefOnly(bookingRef);
@@ -291,7 +339,10 @@ export function createTravelTools({
           // Guest path — OTP required to prove email ownership before payment
           if (!passengerEmail) return { error: "Please provide your email address." };
           if (!otp) return { error: "Please provide the 6-digit verification code sent to your email." };
+          const otpKey = `booking:${passengerEmail}`;
+          if (isOtpLocked(otpKey)) return { error: "Too many invalid attempts. Please request a new verification code." };
           const otpRow = await verifyAndConsumeBookingOtp(passengerEmail, otp);
+          recordOtpAttempt(otpKey, !!otpRow);
           if (!otpRow) return { error: "Invalid or expired verification code. Please request a new one." };
           effectiveUserId = guestUserId();
           effectiveEmail = passengerEmail;
@@ -305,6 +356,19 @@ export function createTravelTools({
         const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
         const priceUsdDisplay = fromMinorUnits(priceMinor, currency);
         const baseUrl = process.env.NEXTAUTH_URL ?? "";
+
+        // DB row created FIRST so a Stripe session always has a matching booking.
+        // stripeSessionId is linked in a second UPDATE after the session is created.
+        await createPendingBooking({
+          userId: effectiveUserId,
+          bookingRef,
+          flightId,
+          offerId,
+          passengerName,
+          seat: seatNumber,
+          email: effectiveEmail,
+          expiresAt,
+        });
 
         let sessionId: string;
         let checkoutUrl: string;
@@ -327,24 +391,17 @@ export function createTravelTools({
           checkoutUrl = result.url;
         } catch (err) {
           logger.error("create_checkout_provider_error", { bookingRef, error: logger.err(err) });
+          await deletePendingBooking(bookingRef).catch(() => {});
           return { error: "Payment service unavailable. Please try again shortly." };
         }
 
         if (!checkoutUrl) {
           logger.error("create_checkout_no_url", { bookingRef, sessionId });
+          await deletePendingBooking(bookingRef).catch(() => {});
           return { error: "Payment service unavailable. Please try again shortly." };
         }
 
-        await createPendingBooking({
-          userId: effectiveUserId,
-          bookingRef,
-          flightId,
-          passengerName,
-          seat: seatNumber,
-          email: effectiveEmail,
-          stripeSessionId: sessionId,
-          expiresAt,
-        });
+        await setBookingStripeSession(bookingRef, sessionId);
 
         return {
           checkoutUrl,

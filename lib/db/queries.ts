@@ -267,6 +267,22 @@ export async function markPasswordResetTokenUsed(id: string) {
     .where(eq(passwordResetTokens.id, id));
 }
 
+// Atomic alternative to getValidPasswordResetToken + markPasswordResetTokenUsed.
+// Prevents the TOCTOU race where two concurrent requests both pass the validity check.
+export async function consumePasswordResetToken(tokenHash: string) {
+  const now = new Date();
+  const [row] = await db
+    .update(passwordResetTokens)
+    .set({ usedAt: now })
+    .where(and(
+      eq(passwordResetTokens.tokenHash, tokenHash),
+      gt(passwordResetTokens.expiresAt, now),
+      isNull(passwordResetTokens.usedAt),
+    ))
+    .returning();
+  return row ?? null;
+}
+
 // --- Stripe payment ---
 
 export async function createPendingBooking(params: {
@@ -276,7 +292,8 @@ export async function createPendingBooking(params: {
   passengerName: string;
   seat: string;
   email?: string;
-  stripeSessionId: string;
+  offerId?: string;
+  stripeSessionId?: string;
   expiresAt: Date;
 }) {
   const id = randomUUID();
@@ -285,6 +302,25 @@ export async function createPendingBooking(params: {
     .values({ id, ...params, paymentStatus: "pending" })
     .returning();
   return booking;
+}
+
+// Called after Stripe session is created to link it to the pending booking.
+export async function setBookingStripeSession(bookingRef: string, stripeSessionId: string) {
+  await db
+    .update(bookings)
+    .set({ stripeSessionId })
+    .where(and(eq(bookings.bookingRef, bookingRef), isNull(bookings.stripeSessionId)));
+}
+
+// Cleans up an orphaned pending booking if Stripe session creation fails.
+export async function deletePendingBooking(bookingRef: string) {
+  await db
+    .delete(bookings)
+    .where(and(
+      eq(bookings.bookingRef, bookingRef),
+      eq(bookings.paymentStatus, "pending"),
+      isNull(bookings.stripeSessionId),
+    ));
 }
 
 // Returns true if this call actually performed the pending→paid transition,
