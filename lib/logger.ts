@@ -1,20 +1,23 @@
-// Structured logger — JSON lines to stdout in production (searchable in Vercel log explorer),
+// Structured logger — JSON lines in production (searchable in Vercel log explorer),
 // human-readable with colour in development. Zero dependencies.
 
 export type LogFields = Record<string, unknown>;
 type Level = "info" | "warn" | "error";
 
 /** Convert any caught value into a plain object safe to embed in log fields. */
-export function serializeError(err: unknown): Record<string, string> {
-  if (err instanceof Error) return { name: err.name, message: err.message };
+export function serializeError(err: unknown): Record<string, string | undefined> {
+  if (err instanceof Error) {
+    const cause = err.cause instanceof Error ? err.cause.message : undefined;
+    return { name: err.name, message: err.message, stack: err.stack, cause };
+  }
   return { message: String(err) };
 }
 
 function emit(level: Level, msg: string, fields?: LogFields): void {
   if (process.env.NODE_ENV === "production") {
-    // One JSON line per event — Vercel captures stdout per-invocation.
-    // Use process.stdout.write to avoid console's extra formatting.
-    process.stdout.write(
+    // info → stdout; warn/error → stderr so Vercel derives log level from stream.
+    const stream = level === "info" ? process.stdout : process.stderr;
+    stream.write(
       JSON.stringify({ level, ts: new Date().toISOString(), msg, ...fields }) + "\n"
     );
   } else {

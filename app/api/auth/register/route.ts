@@ -6,6 +6,7 @@ import { getUserByEmail, createUserWithPassword } from "@/lib/db/queries";
 import { sendWelcomeEmail } from "@/lib/email";
 import { validatePassword } from "@/lib/password";
 import { apiHandler } from "@/lib/api-handler";
+import { logger } from "@/lib/logger";
 
 const schema = z.object({
   firstName: z.string().min(1),
@@ -37,7 +38,7 @@ export const POST = apiHandler(async (req) => {
   await createUserWithPassword({ id: randomUUID(), name, email, passwordHash });
 
   sendWelcomeEmail({ to: email, name }).catch(err =>
-    console.error("[register] welcome email error:", err)
+    logger.warn("register_welcome_email_error", { error: logger.err(err) })
   );
 
   return NextResponse.json({ ok: true }, { status: 201 });

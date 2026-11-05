@@ -61,9 +61,9 @@ beforeAll(() => {
   else if (!runLlmTests) console.warn("RUN_LLM_TESTS not set — Layer 3 tests will be skipped (set RUN_LLM_TESTS=1 to run them).");
 });
 
-// Runs fn; if Anthropic returns a billing/auth error, logs a warning and returns undefined.
-// This lets tests pass gracefully when the API key is set but out of credits.
-async function tryLlm<T>(fn: () => Promise<T>): Promise<T | undefined> {
+// Calls skip() (not return) on billing/auth errors so vitest marks them as skipped,
+// not silently passed with zero assertions.
+async function tryLlm<T>(fn: () => Promise<T>, skip: () => void): Promise<T | undefined> {
   try {
     return await fn();
   } catch (err: unknown) {
@@ -75,6 +75,7 @@ async function tryLlm<T>(fn: () => Promise<T>): Promise<T | undefined> {
       msg.includes("billing")
     ) {
       console.warn("[layer3] skipped — Anthropic API unavailable:", msg.slice(0, 80));
+      skip();
       return undefined;
     }
     throw err;
@@ -87,26 +88,26 @@ When asked to book, use create_checkout. Never ask clarifying questions — call
 
 describe.skipIf(!runLlmTests)("Layer 3 — LLM tool selection", () => {
 
-  test("flight search request → calls search_flights", async () => {
+  test("flight search request → calls search_flights", async ({ skip }) => {
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
       prompt: "Find me flights from JFK to LAX on 2027-06-15",
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
+    }), skip);
     if (!result) return;
     expect(result.toolCalls.map(tc => tc.toolName)).toContain("search_flights");
   }, 30_000);
 
-  test("city names → converts to IATA codes in search_flights", async () => {
+  test("city names → converts to IATA codes in search_flights", async ({ skip }) => {
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
       prompt: "Search flights from New York to Los Angeles on 2027-07-01",
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
+    }), skip);
     if (!result) return;
     const call = result.toolCalls.find(tc => tc.toolName === "search_flights");
     expect(call).toBeDefined();
@@ -114,19 +115,19 @@ describe.skipIf(!runLlmTests)("Layer 3 — LLM tool selection", () => {
     expect((call?.input as { destination: string }).destination).toMatch(/^[A-Z]{3}$/);
   }, 30_000);
 
-  test("seat map request → calls get_flight_seats", async () => {
+  test("seat map request → calls get_flight_seats", async ({ skip }) => {
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
       prompt: "Show me available seats on flight F1",
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
+    }), skip);
     if (!result) return;
     expect(result.toolCalls.map(tc => tc.toolName)).toContain("get_flight_seats");
   }, 30_000);
 
-  test("booking request → calls create_checkout with offerId not priceUsd", async () => {
+  test("booking request → calls create_checkout with offerId not priceUsd", async ({ skip }) => {
     // Pricing invariant: the model must pass the server-issued offerId,
     // not a price it invented. If offerId is missing, Stripe would never be charged.
     const OFFER_ID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
@@ -137,7 +138,7 @@ describe.skipIf(!runLlmTests)("Layer 3 — LLM tool selection", () => {
       prompt: "Book flight F1 for Jane Smith in seat 12A",
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
+    }), skip);
     if (!result) return;
     const call = result.toolCalls.find(tc => tc.toolName === "create_checkout");
     expect(call).toBeDefined();
@@ -147,26 +148,26 @@ describe.skipIf(!runLlmTests)("Layer 3 — LLM tool selection", () => {
     expect((call?.input as Record<string, unknown>).priceUsd).toBeUndefined();
   }, 30_000);
 
-  test("booking lookup → calls get_booking", async () => {
+  test("booking lookup → calls get_booking", async ({ skip }) => {
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
       prompt: "What's the status of my booking BK-1234567890-abc?",
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
+    }), skip);
     if (!result) return;
     expect(result.toolCalls.map(tc => tc.toolName)).toContain("get_booking");
   }, 30_000);
 
-  test("seat change request → calls change_seat", async () => {
+  test("seat change request → calls change_seat", async ({ skip }) => {
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
       prompt: "Can you change my seat to 15C on booking BK-1234567890-abc?",
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
+    }), skip);
     if (!result) return;
     expect(result.toolCalls.map(tc => tc.toolName)).toContain("change_seat");
   }, 30_000);

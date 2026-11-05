@@ -4,6 +4,7 @@ import { randomBytes, createHash, randomUUID } from "crypto";
 import { getUserByEmail, savePasswordResetToken } from "@/lib/db/queries";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { apiHandler } from "@/lib/api-handler";
+import { logger } from "@/lib/logger";
 
 const schema = z.object({ email: z.string().email() });
 
@@ -31,11 +32,11 @@ export const POST = apiHandler(async (req) => {
 
       const resetLink = `${process.env.NEXTAUTH_URL}/reset-password?token=${rawToken}`;
       await sendPasswordResetEmail({ to: email, resetLink }).catch(err =>
-        console.error("[forgot-password] email error:", err)
+        logger.warn("forgot_password_email_error", { error: logger.err(err) })
       );
     }
   } catch (err) {
-    console.error("[forgot-password] DB error:", err);
+    logger.error("forgot_password_db_error", { error: logger.err(err) });
     // Fall through — always return 200 to prevent email enumeration
   }
 

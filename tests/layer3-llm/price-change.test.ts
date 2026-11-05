@@ -8,7 +8,8 @@
  *   LLM behavior (tested here): the model must respect the user's decision. If the
  *     user declines the new price, the model must NOT retry create_checkout.
  *
- * These tests verify the model's decision-making, not the token's cryptographic validity.
+ * Fixture field names match the real create_checkout tool output in lib/tools.ts:
+ *   previousPriceUsd / currentPriceUsd / priceChangeToken / message
  */
 import { describe, test, expect, beforeAll } from "vitest";
 import { config } from "dotenv";
@@ -21,7 +22,7 @@ config({ path: ".env.local" });
 const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
 const runLlmTests = hasApiKey && !!process.env.RUN_LLM_TESTS;
 
-async function tryLlm<T>(fn: () => Promise<T>): Promise<T | undefined> {
+async function tryLlm<T>(fn: () => Promise<T>, skip: () => void): Promise<T | undefined> {
   try {
     return await fn();
   } catch (err: unknown) {
@@ -33,6 +34,7 @@ async function tryLlm<T>(fn: () => Promise<T>): Promise<T | undefined> {
       msg.includes("billing")
     ) {
       console.warn("[layer3] skipped — Anthropic API unavailable:", msg.slice(0, 80));
+      skip();
       return undefined;
     }
     throw err;
@@ -51,13 +53,13 @@ If the user accepts, call create_checkout again and pass the priceChangeToken ex
 
 const travelTools = {
   create_checkout: tool({
-    description: "Create a Stripe payment session. When retrying after a PRICE_CHANGED error, include priceChangeToken.",
+    description: "Create a Stripe payment session to book a flight. Pass the offerId from search results — never pass a price. Returns a checkout URL.",
     inputSchema: z.object({
-      offerId:          z.string().uuid(),
+      offerId:          z.string().uuid().describe("Offer UUID returned by search_flights"),
       flightId:         z.string(),
       passengerName:    z.string(),
       seatNumber:       z.string(),
-      priceChangeToken: z.string().optional().describe("Token from a PRICE_CHANGED error — pass verbatim to confirm accepted price"),
+      priceChangeToken: z.string().optional().describe("Server-issued token returned from a previous PRICE_CHANGED error. Pass it back unchanged to confirm the user accepted the new price."),
     }),
   }),
 };
@@ -65,99 +67,64 @@ const travelTools = {
 const OFFER_ID = "c2aabc99-9c0b-4ef8-bb6d-6bb9bd380a33";
 const PRICE_CHANGE_TOKEN = "hmac.signed.token.abc123def456";
 
-// Shared: user asked to book → model called create_checkout → backend returned PRICE_CHANGED
+// Fixture matches the exact shape returned by lib/tools.ts create_checkout
 const priceChangedHistory: ModelMessage[] = [
   { role: "user", content: "Book flight F1 for Jane Smith in seat 12A." },
   {
     role: "assistant",
-    content: [
-      {
-        type: "tool-call",
-        toolCallId: "call_co_1",
-        toolName: "create_checkout",
-        input: { offerId: OFFER_ID, flightId: "F1", passengerName: "Jane Smith", seatNumber: "12A" },
-      },
-    ],
+    content: [{ type: "tool-call", toolCallId: "call_co_1", toolName: "create_checkout", input: { offerId: OFFER_ID, flightId: "F1", passengerName: "Jane Smith", seatNumber: "12A" } }],
   },
   {
     role: "tool",
-    content: [
-      {
-        type: "tool-result",
-        toolCallId: "call_co_1",
-        toolName: "create_checkout",
-        output: { type: "json", value: {
-          error: "PRICE_CHANGED",
-          message: "The fare price has changed since you searched.",
-          originalPriceUsd: 199.99,
-          newPriceUsd: 229.99,
-          currency: "USD",
-          priceChangeToken: PRICE_CHANGE_TOKEN,
-        }},
-      },
-    ],
+    content: [{ type: "tool-result", toolCallId: "call_co_1", toolName: "create_checkout", output: { type: "json", value: {
+      error: "PRICE_CHANGED",
+      previousPriceUsd: 199.99,
+      currentPriceUsd:  229.99,
+      priceChangeToken: PRICE_CHANGE_TOKEN,
+      message: "The price has changed from $199.99 to $229.99 USD. Tell the user the new price and ask them to confirm. If they accept, call create_checkout again with the priceChangeToken included.",
+    }}}],
   },
 ];
 
 describe.skipIf(!runLlmTests)("Layer 3 — Price change handling", () => {
 
-  test("does not retry checkout when user declines the new price", async () => {
-    // The model communicated the price change, the user says no.
-    // The model must respect this decision and not call create_checkout again.
+  test("does not retry checkout when user declines the new price", async ({ skip }) => {
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
       messages: [
         ...priceChangedHistory,
-        // Model explains the price change to the user
-        {
-          role: "assistant",
-          content: "The price for this flight has changed from $199.99 to $229.99. Would you like to proceed at the new price?",
-        },
-        // User declines
+        { role: "assistant", content: "The price for this flight has changed from $199.99 to $229.99. Would you like to proceed at the new price?" },
         { role: "user", content: "No, $229.99 is too expensive. Cancel the booking." },
       ],
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
-
+    }), skip);
     if (!result) return;
 
-    // Model must not retry checkout after user declines
     expect(result.toolCalls.find(tc => tc.toolName === "create_checkout")).toBeUndefined();
-    // Model should acknowledge the cancellation in text
     expect(result.text.length).toBeGreaterThan(10);
   }, 30_000);
 
-  test("retries checkout with priceChangeToken when user accepts the new price", async () => {
-    // The model communicated the price change, the user accepts.
-    // The model must call create_checkout again and pass the priceChangeToken verbatim.
-    // This is what the backend uses to validate that the user saw and accepted the new price.
+  test("retries checkout with priceChangeToken when user accepts the new price", async ({ skip }) => {
+    // The priceChangeToken is the backend's consent signal — it must be passed verbatim.
     const result = await tryLlm(() => generateText({
       model: anthropic("claude-haiku-4-5-20251001"),
       system: SYSTEM,
       messages: [
         ...priceChangedHistory,
-        {
-          role: "assistant",
-          content: "The price for this flight has changed from $199.99 to $229.99. Would you like to proceed at the new price?",
-        },
-        // User accepts
+        { role: "assistant", content: "The price for this flight has changed from $199.99 to $229.99. Would you like to proceed at the new price?" },
         { role: "user", content: "Yes, that's fine. Please go ahead and book at the new price." },
       ],
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
-
+    }), skip);
     if (!result) return;
 
     const retryCall = result.toolCalls.find(tc => tc.toolName === "create_checkout");
     expect(retryCall).toBeDefined();
-
     const args = retryCall?.input as Record<string, string>;
-    // Must carry the original offerId
     expect(args.offerId).toBe(OFFER_ID);
-    // Must pass the priceChangeToken back — this is the backend's consent signal
     expect(args.priceChangeToken).toBe(PRICE_CHANGE_TOKEN);
   }, 30_000);
 

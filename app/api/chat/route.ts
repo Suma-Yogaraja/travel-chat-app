@@ -164,7 +164,7 @@ export const POST = apiHandler(async (req: Request) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const s = step as any;
       if (s.usage) {
-        logger.info("tokens", { in: s.usage.promptTokens, out: s.usage.completionTokens });
+        logger.info("tokens", { in: s.usage.inputTokens, out: s.usage.outputTokens });
       }
     },
   });

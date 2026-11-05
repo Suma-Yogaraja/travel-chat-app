@@ -17,7 +17,10 @@ config({ path: ".env.local" });
 const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
 const runLlmTests = hasApiKey && !!process.env.RUN_LLM_TESTS;
 
-async function tryLlm<T>(fn: () => Promise<T>): Promise<T | undefined> {
+// Wraps an LLM call and re-throws unexpected errors.
+// Calls skip() (not return) on billing/auth errors so vitest marks them as skipped,
+// not silently passed.
+async function tryLlm<T>(fn: () => Promise<T>, skip: () => void): Promise<T | undefined> {
   try {
     return await fn();
   } catch (err: unknown) {
@@ -29,6 +32,7 @@ async function tryLlm<T>(fn: () => Promise<T>): Promise<T | undefined> {
       msg.includes("billing")
     ) {
       console.warn("[layer3] skipped — Anthropic API unavailable:", msg.slice(0, 80));
+      skip();
       return undefined;
     }
     throw err;
@@ -59,12 +63,12 @@ const travelTools = {
     }),
   }),
   create_checkout: tool({
-    description: "Create a Stripe payment session. Pass offerId from search results. NEVER invent a price.",
+    description: "Create a Stripe payment session to book a flight. Pass the offerId from search results — never pass a price. Returns a checkout URL.",
     inputSchema: z.object({
-      offerId:       z.string().uuid().describe("Offer UUID from search_flights — must be carried verbatim"),
-      flightId:      z.string(),
-      passengerName: z.string(),
-      seatNumber:    z.string(),
+      offerId:       z.string().uuid().describe("Offer UUID returned by search_flights — identifies the flight and authorises the server-side price"),
+      flightId:      z.string().describe("Human-readable flight ID e.g. F1 — used for display only"),
+      passengerName: z.string().describe("Full name of the passenger"),
+      seatNumber:    z.string().describe("Seat number e.g. 12A"),
     }),
   }),
 };
@@ -73,77 +77,36 @@ const OFFER_ID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
 
 describe.skipIf(!runLlmTests)("Layer 3 — Offer context retention", () => {
 
-  test("offer UUID is preserved after seat-map turn and additional dialogue", async () => {
-    // Builds a 5-message history where search results containing the offerId were shown
-    // early in the conversation. After an interleaved seat-map turn and some back-and-forth,
-    // the user asks to book. The model must carry the original offerId through to create_checkout.
+  test("offer UUID is preserved after seat-map turn and additional dialogue", async ({ skip }) => {
+    // Builds a conversation where search results containing the offerId were shown
+    // early. After an interleaved seat-map turn, the user asks to book.
+    // The model must carry the original offerId through to create_checkout.
     const messages: ModelMessage[] = [
-      // Turn 1: user searches
       { role: "user", content: "Find flights from JFK to LAX on 2027-06-15" },
-      // Turn 2: model calls search and receives results
       {
         role: "assistant",
-        content: [
-          {
-            type: "tool-call",
-            toolCallId: "call_search_1",
-            toolName: "search_flights",
-            input: { origin: "JFK", destination: "LAX", date: "2027-06-15" },
-          },
-        ],
+        content: [{ type: "tool-call", toolCallId: "call_s1", toolName: "search_flights", input: { origin: "JFK", destination: "LAX", date: "2027-06-15" } }],
       },
       {
         role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: "call_search_1",
-            toolName: "search_flights",
-            output: { type: "json", value: [
-              {
-                id: "F1",
-                offerId: OFFER_ID,
-                price: 199.99,
-                currency: "USD",
-                origin: "JFK",
-                destination: "LAX",
-                departure: "2027-06-15T08:00:00",
-                arrival: "2027-06-15T11:00:00",
-                airline: "AA",
-              },
-            ]},
-          },
-        ],
+        content: [{ type: "tool-result", toolCallId: "call_s1", toolName: "search_flights", output: { type: "json", value: [
+          { id: "F1", offerId: OFFER_ID, price: 199.99, currency: "USD", origin: "JFK", destination: "LAX", departure: "2027-06-15T08:00:00", arrival: "2027-06-15T11:00:00", airline: "AA" },
+        ]}}],
       },
-      // Turn 3: user asks about seats (interleaved turn — tests context retention)
+      // Interleaved seat-map turn tests that the offerId isn't lost
       { role: "user", content: "What window seats are free on F1?" },
       {
         role: "assistant",
-        content: [
-          {
-            type: "tool-call",
-            toolCallId: "call_seats_1",
-            toolName: "get_flight_seats",
-            input: { flightId: "F1" },
-          },
-        ],
+        content: [{ type: "tool-call", toolCallId: "call_seat1", toolName: "get_flight_seats", input: { flightId: "F1" } }],
       },
       {
         role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: "call_seats_1",
-            toolName: "get_flight_seats",
-            output: { type: "json", value: [
-              { id: "12A", available: true, type: "window" },
-              { id: "14A", available: true, type: "window" },
-              { id: "12B", available: false, type: "middle" },
-            ]},
-          },
-        ],
+        content: [{ type: "tool-result", toolCallId: "call_seat1", toolName: "get_flight_seats", output: { type: "json", value: [
+          { id: "12A", available: true, type: "window" },
+          { id: "14A", available: true, type: "window" },
+          { id: "12B", available: false, type: "middle" },
+        ]}}],
       },
-      // Turn 4: user picks a seat and asks to book
       { role: "user", content: "Great — book 12A for Jane Smith please." },
     ];
 
@@ -153,13 +116,12 @@ describe.skipIf(!runLlmTests)("Layer 3 — Offer context retention", () => {
       messages,
       tools: travelTools,
       stopWhen: stepCountIs(1),
-    }));
-
+    }), skip);
     if (!result) return;
 
     const call = result.toolCalls.find(tc => tc.toolName === "create_checkout");
     expect(call).toBeDefined();
-    // Core assertion: the original server-issued offer UUID must be preserved verbatim
+    // Core assertion: original server-issued UUID must be preserved verbatim
     expect((call?.input as { offerId: string }).offerId).toBe(OFFER_ID);
   }, 45_000);
 

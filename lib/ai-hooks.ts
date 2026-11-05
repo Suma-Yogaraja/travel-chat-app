@@ -17,7 +17,7 @@ export function createLoggingHook(): (step: any) => void {
 export function createTokenCountHook(): (event: any) => void {
   return (event) => {
     if (event?.usage) {
-      logger.info("tokens", { in: event.usage.promptTokens, out: event.usage.completionTokens });
+      logger.info("tokens", { in: event.usage.inputTokens, out: event.usage.outputTokens });
     }
   };
 }
