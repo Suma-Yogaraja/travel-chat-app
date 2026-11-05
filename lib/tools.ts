@@ -8,7 +8,6 @@ import {
   saveBookingVerificationOtp, verifyAndConsumeBookingOtp,
   createPendingBooking, setBookingStripeSession, deletePendingBooking,
 } from "./db/queries";
-import { withStripe, getStripe } from "./stripe";
 import {
   sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
 } from "./email";
@@ -60,6 +59,27 @@ function recordOtpAttempt(key: string, success: boolean) {
   }
 }
 
+// OTP send throttle — prevents spam and limits attacker's ability to consume a victim's
+// verify attempts by sending codes they then try to brute-force.
+const otpSends = new Map<string, { count: number; firstAt: number }>();
+const OTP_SEND_MAX = 3;
+
+function isOtpSendThrottled(email: string): boolean {
+  const entry = otpSends.get(email);
+  if (!entry || Date.now() - entry.firstAt > OTP_WINDOW_MS) return false;
+  return entry.count >= OTP_SEND_MAX;
+}
+
+function recordOtpSend(email: string) {
+  const now = Date.now();
+  const entry = otpSends.get(email);
+  if (!entry || now - entry.firstAt > OTP_WINDOW_MS) {
+    otpSends.set(email, { count: 1, firstAt: now });
+  } else {
+    otpSends.set(email, { ...entry, count: entry.count + 1 });
+  }
+}
+
 // search_flights and get_flight_seats are served via the MCP server (lib/mcp-bridge.ts).
 // This file only defines session-aware tools that need auth/DB context.
 
@@ -77,6 +97,9 @@ export function createTravelTools({
       }),
       execute: async ({ email }) => {
         if (userId) return { error: "Not needed for signed-in users." };
+        if (isOtpSendThrottled(email)) {
+          return { error: "Too many verification codes requested. Please wait 10 minutes before trying again." };
+        }
         const otp = generateOtp();
         await saveBookingVerificationOtp(email, otp);
         try {
@@ -85,6 +108,7 @@ export function createTravelTools({
           logger.error("send_booking_otp_email_error", { error: logger.err(err) });
           return { error: "Failed to send verification email. Please try again." };
         }
+        recordOtpSend(email);
         return { sent: true };
       },
     }),
@@ -169,6 +193,9 @@ export function createTravelTools({
         if (!booking.email) return { error: "No email on file for this booking" };
         if (booking.status === "cancelled") return { error: "This booking is already cancelled" };
 
+        if (isOtpSendThrottled(booking.email)) {
+          return { error: "Too many verification codes requested. Please wait 10 minutes before trying again." };
+        }
         const otp = generateOtp();
         await saveGuestOtp(bookingRef, otp);
 
@@ -178,7 +205,7 @@ export function createTravelTools({
           logger.error("request_otp_email_error", { bookingRef, error: logger.err(err) });
           return { error: "Failed to send verification email. Please try again." };
         }
-
+        recordOtpSend(booking.email);
         return { sent: true, message: "OTP sent to the email on file for this booking. It expires in 10 minutes." };
       },
     }),
@@ -201,20 +228,18 @@ export function createTravelTools({
         if (!booking) return { error: `Booking ${bookingRef} not found` };
         if (booking.status === "cancelled") return { error: "This booking is already cancelled" };
 
-        // Refund or expire the Stripe session before cancelling
+        // Refund or expire the Stripe session before cancelling.
+        // If the refund fails, return an error — do not cancel without refunding.
         if (booking.stripeSessionId) {
           if (booking.paymentStatus === "paid") {
             try {
-              const session = await getStripe().checkout.sessions.retrieve(booking.stripeSessionId);
-              if (typeof session.payment_intent === "string") {
-                await withStripe(stripe => stripe.refunds.create({ payment_intent: session.payment_intent as string }));
-              }
+              await paymentProvider.refundPayment({ stripeSessionId: booking.stripeSessionId, bookingRef });
             } catch (err) {
               logger.error("cancel_refund_error", { bookingRef, error: logger.err(err) });
-              // Proceed with DB cancellation — refund to be resolved manually if Stripe call failed
+              return { error: "Could not process your refund. Please contact support to cancel this booking." };
             }
           } else if (booking.paymentStatus === "pending") {
-            await withStripe(stripe => stripe.checkout.sessions.expire(booking.stripeSessionId!)).catch(() => {});
+            await paymentProvider.expireSession({ stripeSessionId: booking.stripeSessionId }).catch(() => {});
           }
         }
 

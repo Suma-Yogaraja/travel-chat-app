@@ -7,6 +7,7 @@ import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { db } from "@/lib/db";
 import { accounts, sessions, users, verificationTokens } from "@/lib/db/schema";
 import { getUserByEmail } from "@/lib/db/queries";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db, {
@@ -26,7 +27,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
     Credentials({
       credentials: { email: {}, password: {} },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
+        const ip = request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? "unknown";
+        if (!checkRateLimit(`login:${ip}`, { maxRequests: 10, windowMs: 15 * 60 * 1000 }).allowed) {
+          return null;
+        }
         const user = await getUserByEmail(credentials.email as string);
         if (!user?.passwordHash) return null;
         const valid = await bcrypt.compare(credentials.password as string, user.passwordHash);

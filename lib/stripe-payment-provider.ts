@@ -33,4 +33,20 @@ export const stripePaymentProvider: PaymentProvider = {
     );
     return { id: session.id, url: session.url ?? "" };
   },
+
+  async refundPayment({ stripeSessionId, bookingRef }) {
+    await withStripe(async stripe => {
+      const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
+      if (typeof session.payment_intent === "string") {
+        await stripe.refunds.create(
+          { payment_intent: session.payment_intent },
+          { idempotencyKey: `refund-${bookingRef}` },
+        );
+      }
+    });
+  },
+
+  async expireSession({ stripeSessionId }) {
+    await withStripe(stripe => stripe.checkout.sessions.expire(stripeSessionId));
+  },
 };

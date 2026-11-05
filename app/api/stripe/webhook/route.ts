@@ -26,12 +26,25 @@ export async function POST(req: Request) {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
+
+    // Silently ignore sessions not created by this app (no bookingRef in metadata).
+    // Returning 500 would cause Stripe to retry indefinitely for non-app sessions.
+    if (!session.metadata?.bookingRef) {
+      return new Response("ok");
+    }
+
+    // Only process fully paid sessions — some payment methods (e.g. SEPA) can fire
+    // checkout.session.completed before the payment settles.
+    if (session.payment_status !== "paid") {
+      return new Response("ok");
+    }
+
     const booking = await getBookingByStripeSession(session.id);
 
     if (!booking) {
-      // Payment received but no booking row — likely a DB failure during create_checkout.
+      // Payment received for a known bookingRef but no DB row — DB failure during create_checkout.
       // Return 500 so Stripe retries. Manual investigation required if retries exhaust.
-      logger.error("webhook_booking_not_found", { stripeSessionId: session.id });
+      logger.error("webhook_booking_not_found", { stripeSessionId: session.id, bookingRef: session.metadata.bookingRef });
       return new Response("Booking not found", { status: 500 });
     }
 

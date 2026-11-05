@@ -15,4 +15,8 @@ export interface CheckoutParams {
 
 export interface PaymentProvider {
   createCheckoutSession(params: CheckoutParams): Promise<{ id: string; url: string }>;
+  /** Refund a completed payment. idempotent — keyed to stripeSessionId. */
+  refundPayment(params: { stripeSessionId: string; bookingRef: string }): Promise<void>;
+  /** Expire an open checkout session before payment is captured. */
+  expireSession(params: { stripeSessionId: string }): Promise<void>;
 }

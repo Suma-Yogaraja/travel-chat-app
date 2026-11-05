@@ -39,10 +39,18 @@ function setupStripe(event: unknown, throws?: Error) {
   return constructEvent;
 }
 
-function completedEvent(sessionId = "cs_test_001", overrides = {}) {
+function completedEvent(sessionId = "cs_test_001", overrides: Record<string, unknown> = {}) {
   return {
     type: "checkout.session.completed",
-    data: { object: { id: sessionId, customer_email: "alice@example.com", ...overrides } },
+    data: {
+      object: {
+        id: sessionId,
+        payment_status: "paid",
+        customer_email: "alice@example.com",
+        metadata: { bookingRef: "BK-1731000000000-abc" },
+        ...overrides,
+      },
+    },
   };
 }
 
@@ -119,7 +127,7 @@ describe("checkout.session.completed — happy path", () => {
   });
 
   it("uses booking.email for guest bookings (no customer_email on session)", async () => {
-    setupStripe({ ...completedEvent(), data: { object: { id: "cs_test_001", customer_email: null } } });
+    setupStripe(completedEvent("cs_test_001", { customer_email: null }));
     mockGetBooking.mockResolvedValue(
       makePendingBooking({ email: "guest@example.com" }) as never
     );
@@ -143,7 +151,7 @@ describe("checkout.session.completed — happy path", () => {
   });
 
   it("does not crash when booking has no email and session has no customer_email", async () => {
-    setupStripe({ ...completedEvent(), data: { object: { id: "cs_test_001", customer_email: null } } });
+    setupStripe(completedEvent("cs_test_001", { customer_email: null }));
     mockGetBooking.mockResolvedValue(
       makePendingBooking({ email: null }) as never
     );

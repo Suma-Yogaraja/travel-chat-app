@@ -57,7 +57,11 @@ const mockVerifyTok     = vi.mocked(verifyPriceChangeToken);
 function makeProvider(url = "https://checkout.stripe.com/pay/sess_abc123"): PaymentProvider & {
   createCheckoutSession: ReturnType<typeof vi.fn>;
 } {
-  return { createCheckoutSession: vi.fn().mockResolvedValue({ id: "sess_abc123", url }) };
+  return {
+    createCheckoutSession: vi.fn().mockResolvedValue({ id: "sess_abc123", url }),
+    refundPayment:  vi.fn().mockResolvedValue(undefined),
+    expireSession:  vi.fn().mockResolvedValue(undefined),
+  };
 }
 
 function validOffer(overrides: Record<string, unknown> = {}) {

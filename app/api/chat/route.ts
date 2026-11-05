@@ -38,11 +38,24 @@ export const POST = apiHandler(async (req: Request) => {
   }
 
   const session = await auth();
-  const body = await req.json().catch(() => null);
-  if (!body || !Array.isArray(body.messages)) {
+
+  // Read the body as text first so we can enforce a size cap regardless of whether
+  // the client sends a Content-Length header (chunked transfers omit it).
+  const rawBody = await req.text().catch(() => null);
+  if (!rawBody || rawBody.length > 131_072) { // 128 KB
+    return new Response(rawBody === null ? "Invalid request body" : "Payload too large", {
+      status: rawBody === null ? 400 : 413,
+    });
+  }
+  let body: { messages?: UIMessage[]; conversationId?: string };
+  try { body = JSON.parse(rawBody); } catch { return new Response("Invalid request body", { status: 400 }); }
+  if (!Array.isArray(body.messages)) {
     return new Response("Invalid request body", { status: 400 });
   }
-  const { messages, conversationId }: { messages: UIMessage[]; conversationId?: string } = body;
+  if (body.messages.length > 100) {
+    return new Response("Too many messages", { status: 400 });
+  }
+  const { messages, conversationId } = body as { messages: UIMessage[]; conversationId?: string };
 
   // Security: if a conversationId is provided, verify ownership
   if (conversationId && session?.user?.id) {
