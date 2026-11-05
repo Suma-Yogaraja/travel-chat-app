@@ -24,6 +24,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - `createTravelTools` takes a `TravelToolsContext` options object — never positional args. The `paymentProvider` field defaults to `stripePaymentProvider`; tests inject a fake. Never add more positional parameters.
 - `guestSessionId` always comes from the server-set HttpOnly cookie (`lib/guest-session.ts`) — never from tool arguments. The model cannot supply or influence it.
 - Offer pricing is server-authoritative: the model passes `offerId` (UUID), `validateOfferForCheckout` re-validates with Duffel and returns the current price. Never accept a price from tool arguments.
+- Use `logger` from `lib/logger.ts` for all error/info/warn output — never `console.error` or `console.log`. Use `logger.err(e)` to serialise caught errors into log fields.
 
 ## Key files
 - `mcp-server/index.ts` — 5 MCP tools, exports `createTravelMcpServer()` and `main()`. `get_flight_seats` falls back to a generated seat map if provider returns 0 seats.
@@ -38,6 +39,7 @@ A chat-based travel app where users search flights, book tickets, and change sea
 - `lib/offers/offer-repository.ts` — DB queries for `flight_offers` table.
 - `lib/offers/price-confirmation.ts` — HMAC-SHA256 `priceChangeToken` generation/verification. Used when Duffel reports a price change between search and checkout.
 - `lib/booking-status.ts` — `getBookingPaymentStatus(booking)` pure mapping function.
+- `lib/logger.ts` — structured JSON logger. Production: JSON lines to stdout → Vercel Log Explorer. Dev: colour-coded console. `logger.err(e)` serialises errors. Zero dependencies.
 - `lib/rate-limit.ts` — sliding-window rate limiter (20 req/min per IP, in-memory per process)
 - `lib/flight-provider/index.ts` — FlightProvider interface + factory
 - `lib/db/schema.ts` — Drizzle table definitions (includes `flight_offers` table)
@@ -113,7 +115,7 @@ Currently using **Claude Haiku** (`claude-haiku-4-5-20251001`) via `@ai-sdk/anth
 ### Global API handler (`lib/api-handler.ts`)
 All API routes are wrapped with `apiHandler()` — a higher-order function that catches any unhandled error and returns a consistent response:
 - `AppError` (thrown intentionally with message + status) → `{ error: message }` JSON with that status
-- Anything else → `console.error("[API error] METHOD /path", err)` + 500
+- Anything else → `logger.error("api_unhandled_error", { method, path, error: logger.err(err) })` + 500
 - `app/api/auth/forgot-password/route.ts` keeps an inner try/catch to preserve its always-200 contract (prevents email enumeration); the outer `apiHandler` is a safety net on top
 
 ### UI error boundaries
@@ -135,16 +137,20 @@ LLM traces are captured via `@langfuse/vercel-ai-sdk` + `@langfuse/otel` (Langfu
 **Setup:**
 - `instrumentation.ts`: `registerOTel({ spanProcessors: [langfuseProcessor] })` + `registerTelemetry(new LangfuseVercelAiSdkIntegration())`
 - `lib/langfuse-processor.ts`: singleton `LangfuseSpanProcessor({ exportMode: "immediate" })` — shared between instrumentation and the chat route
-- `app/api/chat/route.ts`: `telemetry: { isEnabled: true, functionId: "travel-chat", integrations: [langfuseIntegration] }` on `streamText`; `langfuseProcessor.forceFlush()` in `onFinish`
+- `app/api/chat/route.ts`: `telemetry: { isEnabled: true, functionId: "travel-chat", recordInputs: false, integrations: [langfuseIntegration] }` on `streamText`; `langfuseProcessor.forceFlush()` in `onFinish`
 - Requires `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASEURL` env vars (also reads `LANGFUSE_BASE_URL`)
 
 **Why this stack (not `langfuse-vercel` v3):**
 Langfuse's server now only accepts spans via their OTel HTTP endpoint (`/api/public/otel/v1/traces`). The old `langfuse-vercel` v3 SDK sent via a proprietary format that was rejected with HTTP 400. AI SDK v7 also replaced `experimental_telemetry`'s OTel global approach with a callback integration system — `registerTelemetry()` is now the correct hook point.
 
 **What Langfuse captures per conversation:**
-- Full model input + output with tool calls and results
+- Model output with tool calls and results (inputs suppressed by `recordInputs: false`)
 - Token usage, latency, and cost per trace
 - Span hierarchy: `invoke_agent` → `chat` → per-step spans
+
+**What Langfuse does NOT capture:** Stripe webhooks, auth errors, DB failures, rate limit events, client-side crashes — anything outside the `streamText` call. For those, use `lib/logger.ts` → Vercel Log Explorer.
+
+**PII note:** `recordInputs: false` suppresses prompt messages and `gen_ai.tool.call.arguments` spans. Tool call args (incl. OTP/passengerEmail) still appear in `gen_ai.output.messages` as model output. Full suppression needs `recordOutputs: false` — not set, as it removes all model response visibility.
 
 ## Flight provider
 
