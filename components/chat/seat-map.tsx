@@ -6,6 +6,8 @@ interface Seat {
   column: string;
   type: "window" | "aisle" | "middle";
   available: boolean;
+  price?: number;    // seat surcharge in display units; undefined = included in fare
+  currency?: string;
 }
 
 interface SeatMapProps {
@@ -22,6 +24,9 @@ const COLORS = {
 
 function Seat({ seat, onSelect }: { seat: Seat; onSelect?: (s: string) => void }) {
   const c = seat.available ? COLORS[seat.type] : null;
+  const priceLabel = seat.price && seat.price > 0
+    ? `+$${seat.price % 1 === 0 ? seat.price : seat.price.toFixed(2)}`
+    : "incl.";
 
   return (
     <div
@@ -33,27 +38,43 @@ function Seat({ seat, onSelect }: { seat: Seat; onSelect?: (s: string) => void }
       onMouseLeave={e => { if (c) (e.currentTarget as HTMLDivElement).style.background = c.bg; }}
       style={{
         width: 44,
-        height: 40,
+        height: 52,
         borderRadius: 8,
         background: c ? c.bg : "#141414",
         border: `1px solid ${c ? c.border : "#252525"}`,
         cursor: seat.available ? "pointer" : "default",
         transition: "background 0.12s",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
+        gap: 2,
         userSelect: "none",
         WebkitUserSelect: "none",
         boxSizing: "border-box",
-        fontSize: 12,
+      }}
+    >
+      <span style={{
+        fontSize: 11,
         fontWeight: 700,
         fontFamily: "ui-monospace, monospace",
         color: seat.available ? "#ffffff" : "#3a3a3a",
         lineHeight: 1,
         letterSpacing: "0.02em",
-      }}
-    >
-      {seat.seatNumber}
+      }}>
+        {seat.seatNumber}
+      </span>
+      <span style={{
+        fontSize: 9,
+        fontWeight: 500,
+        fontFamily: "ui-monospace, monospace",
+        color: seat.available
+          ? (seat.price && seat.price > 0 ? "#fbbf24" : "#4a5a4a")
+          : "#2a2a2a",
+        lineHeight: 1,
+      }}>
+        {seat.available ? priceLabel : ""}
+      </span>
     </div>
   );
 }
@@ -66,7 +87,7 @@ export function SeatMap({ seats, flightId, onSelectSeat }: SeatMapProps) {
     return seats.find(s => s.row === row && s.column === col);
   }
 
-  const ROW_H = 40;
+  const ROW_H = 52;
   const GAP = 4;
   const COL_W = 44;
 

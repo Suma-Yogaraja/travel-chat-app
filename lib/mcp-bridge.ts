@@ -4,6 +4,7 @@ import { tool, jsonSchema } from "ai";
 import type { ToolSet } from "ai";
 import { createTravelMcpServer } from "@/mcp-server/index";
 import { persistFlightOffer } from "@/lib/offers/offer-service";
+import { getFlightOfferByFlightId, updateFlightOfferSeatPrices } from "@/lib/offers/offer-repository";
 import { logger } from "@/lib/logger";
 
 // Tools served via the MCP server — session-agnostic, read-only flight data.
@@ -102,12 +103,38 @@ export async function connectMcpTools(
         },
       });
     } else {
-      // get_flight_seats — proxy unchanged, no context needed
+      // get_flight_seats — persist seat prices to the matching offer so create_checkout
+      // can read them server-side without accepting any price from the model.
       tools[def.name] = tool({
         description: def.description ?? "",
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         inputSchema: jsonSchema(def.inputSchema as any),
-        execute: async (input) => callMcpTool(client, def.name, input as Record<string, unknown>),
+        execute: async (input) => {
+          const result = await callMcpTool(client, def.name, input as Record<string, unknown>);
+
+          if (Array.isArray(result)) {
+            const flightId = (input as { flightId: string }).flightId;
+            const priceMap: Record<string, number> = {};
+            for (const seat of result) {
+              if (seat && typeof seat === "object" && "seatNumber" in seat && "price" in seat) {
+                const s = seat as { seatNumber: string; price?: number };
+                if (s.price && s.price > 0) {
+                  priceMap[s.seatNumber] = Math.round(s.price * 100);
+                }
+              }
+            }
+            if (Object.keys(priceMap).length > 0) {
+              try {
+                const offer = await getFlightOfferByFlightId(flightId, context);
+                if (offer) await updateFlightOfferSeatPrices(offer.id, priceMap);
+              } catch (err) {
+                logger.error("mcp_bridge_seat_price_persist_error", { flightId, error: logger.err(err) });
+              }
+            }
+          }
+
+          return result;
+        },
       });
     }
   }

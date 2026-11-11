@@ -1,5 +1,5 @@
 import { getStripe } from "@/lib/stripe";
-import { getBookingByStripeSession, confirmBooking, expireBooking } from "@/lib/db/queries";
+import { getBookingByStripeSession, confirmBooking, expireBooking, confirmSeatUpgrade } from "@/lib/db/queries";
 import { sendBookingConfirmation } from "@/lib/email";
 import { logger } from "@/lib/logger";
 import type Stripe from "stripe";
@@ -28,7 +28,6 @@ export async function POST(req: Request) {
     const session = event.data.object as Stripe.Checkout.Session;
 
     // Silently ignore sessions not created by this app (no bookingRef in metadata).
-    // Returning 500 would cause Stripe to retry indefinitely for non-app sessions.
     if (!session.metadata?.bookingRef) {
       return new Response("ok");
     }
@@ -36,6 +35,17 @@ export async function POST(req: Request) {
     // Only process fully paid sessions — some payment methods (e.g. SEPA) can fire
     // checkout.session.completed before the payment settles.
     if (session.payment_status !== "paid") {
+      return new Response("ok");
+    }
+
+    // Seat upgrade payment — update seat + price on the existing booking, no new booking row.
+    if (session.metadata.type === "seat_upgrade") {
+      const { bookingRef, newSeat, newSeatPriceMinor } = session.metadata;
+      if (!newSeat || !newSeatPriceMinor) {
+        logger.error("webhook_upgrade_missing_metadata", { stripeSessionId: session.id });
+        return new Response("Missing upgrade metadata", { status: 500 });
+      }
+      await confirmSeatUpgrade(bookingRef, newSeat, parseInt(newSeatPriceMinor));
       return new Response("ok");
     }
 

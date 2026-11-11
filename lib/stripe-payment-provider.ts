@@ -1,5 +1,5 @@
 import { withStripe } from "./stripe";
-import type { PaymentProvider } from "./payment-provider";
+import type { PaymentProvider, SeatUpgradeParams } from "./payment-provider";
 
 export const stripePaymentProvider: PaymentProvider = {
   async createCheckoutSession(params) {
@@ -32,6 +32,44 @@ export const stripePaymentProvider: PaymentProvider = {
       })
     );
     return { id: session.id, url: session.url ?? "" };
+  },
+
+  async createSeatUpgradeSession(params: SeatUpgradeParams) {
+    const session = await withStripe(stripe =>
+      stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [{
+          price_data: {
+            currency: params.currency.toLowerCase(),
+            product_data: { name: `Seat upgrade to ${params.newSeat}` },
+            unit_amount: params.diffMinor,
+          },
+          quantity: 1,
+        }],
+        success_url: params.successUrl,
+        cancel_url:  params.cancelUrl,
+        customer_email: params.customerEmail,
+        metadata: {
+          type:               "seat_upgrade",
+          bookingRef:         params.bookingRef,
+          newSeat:            params.newSeat,
+          newSeatPriceMinor:  String(params.newSeatPriceMinor),
+        },
+      })
+    );
+    return { id: session.id, url: session.url ?? "" };
+  },
+
+  async refundPartial({ stripeSessionId, bookingRef, amountMinor }) {
+    await withStripe(async stripe => {
+      const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
+      if (typeof session.payment_intent === "string") {
+        await stripe.refunds.create(
+          { payment_intent: session.payment_intent, amount: amountMinor },
+          { idempotencyKey: `refund-partial-${bookingRef}-${amountMinor}` },
+        );
+      }
+    });
   },
 
   async refundPayment({ stripeSessionId, bookingRef }) {

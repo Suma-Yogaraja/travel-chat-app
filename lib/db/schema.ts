@@ -68,6 +68,7 @@ export const bookings = pgTable("bookings", {
   // Stripe payment fields
   stripeSessionId:  text("stripe_session_id").unique(),
   paymentStatus:    text("payment_status").notNull().default("pending"), // "pending" | "paid" | "expired" | "failed"
+  seatPriceMinor:   integer("seat_price_minor"),                         // seat surcharge paid in minor units (null = $0)
   expiresAt:        timestamp("expires_at", { mode: "date" }),
   createdAt:        timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 }, (t) => [
@@ -117,6 +118,7 @@ export const flightOffers = pgTable("flight_offers", {
   segments:        jsonb("segments").notNull(),              // full flight data for display/audit
   priceMinor:      integer("price_minor").notNull(),         // e.g. 15999 for $159.99 USD
   currency:        text("currency").notNull().default("USD"),
+  seatPrices:      jsonb("seat_prices"),                     // Record<seatNumber, priceMinor> — populated by get_flight_seats
   expiresAt:       timestamp("expires_at", { mode: "date", withTimezone: true }).notNull(),
   createdAt:       timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });

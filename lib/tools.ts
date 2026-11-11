@@ -7,7 +7,10 @@ import {
   saveGuestOtp, verifyAndConsumeOtp,
   saveBookingVerificationOtp, verifyAndConsumeBookingOtp,
   createPendingBooking, setBookingStripeSession, deletePendingBooking,
+  updateBookingSeatAndPrice, updateBookingSeatAndPriceByRef,
 } from "./db/queries";
+import { getFlightOfferById } from "./offers/offer-repository";
+import { mockSeatSurchargeMinor } from "./seat-pricing";
 import {
   sendSeatChangeConfirmation, sendCancellationConfirmation, sendOtpEmail,
 } from "./email";
@@ -80,6 +83,20 @@ function recordOtpSend(email: string) {
   }
 }
 
+// Looks up the seat surcharge in minor units from the offer's persisted seat price map.
+// Falls back to deterministic mock pricing for mock provider; 0 for Duffel if not found.
+async function resolveSeatSurcharge(seatNumber: string, offerId?: string | null): Promise<number> {
+  if (offerId) {
+    const offer = await getFlightOfferById(offerId);
+    if (offer) {
+      const prices = (offer.seatPrices ?? {}) as Record<string, number>;
+      if (prices[seatNumber] !== undefined) return prices[seatNumber];
+      if (offer.provider === "mock") return mockSeatSurchargeMinor(seatNumber);
+    }
+  }
+  return 0;
+}
+
 // search_flights and get_flight_seats are served via the MCP server (lib/mcp-bridge.ts).
 // This file only defines session-aware tools that need auth/DB context.
 
@@ -138,19 +155,79 @@ export function createTravelTools({
         if (!userId) return { error: "Not authenticated" };
         const existing = await getBookingByRef(bookingId, userId);
         if (!existing) return { error: `Booking ${bookingId} not found` };
-        const updated = await updateBookingSeat(bookingId, userId, newSeat);
-        if (!updated) return { error: `Failed to update booking ${bookingId}` };
-        if (userEmail) {
-          sendSeatChangeConfirmation({
-            to: userEmail,
-            passengerName: existing.passengerName,
-            bookingRef: bookingId,
-            flightId: existing.flightId,
-            oldSeat: existing.seat,
-            newSeat,
-          }).catch(() => {});
+
+        const oldSurcharge = existing.seatPriceMinor ?? 0;
+        const newSurcharge = await resolveSeatSurcharge(newSeat, existing.offerId);
+        const baseUrl = process.env.NEXTAUTH_URL ?? "";
+
+        if (newSurcharge > oldSurcharge) {
+          // Upgrade — pay the difference
+          const diffMinor = newSurcharge - oldSurcharge;
+          try {
+            const session = await paymentProvider.createSeatUpgradeSession({
+              diffMinor,
+              currency: "USD",
+              bookingRef: bookingId,
+              newSeat,
+              newSeatPriceMinor: newSurcharge,
+              customerEmail: userEmail,
+              successUrl: `${baseUrl}/chat`,
+              cancelUrl:  `${baseUrl}/chat`,
+            });
+            return {
+              upgradeRequired: true,
+              checkoutUrl: session.url,
+              diffUsd: fromMinorUnits(diffMinor, "USD"),
+              newSeat,
+              message: `Seat ${newSeat} costs $${fromMinorUnits(diffMinor, "USD")} more than your current seat. Click the button to pay the upgrade fee.`,
+            };
+          } catch (err) {
+            logger.error("seat_upgrade_checkout_error", { bookingRef: bookingId, error: logger.err(err) });
+            return { error: "Payment service unavailable. Please try again." };
+          }
+        } else if (newSurcharge < oldSurcharge) {
+          // Downgrade — refund the difference
+          const refundMinor = oldSurcharge - newSurcharge;
+          if (existing.stripeSessionId && existing.paymentStatus === "paid") {
+            try {
+              await paymentProvider.refundPartial({
+                stripeSessionId: existing.stripeSessionId,
+                bookingRef: bookingId,
+                amountMinor: refundMinor,
+              });
+            } catch (err) {
+              logger.error("seat_downgrade_refund_error", { bookingRef: bookingId, error: logger.err(err) });
+              return { error: "Could not process your refund. Please contact support." };
+            }
+          }
+          const updated = await updateBookingSeatAndPrice(bookingId, userId, newSeat, newSurcharge);
+          if (!updated) return { error: `Failed to update booking ${bookingId}` };
+          if (userEmail) {
+            sendSeatChangeConfirmation({
+              to: userEmail, passengerName: existing.passengerName,
+              bookingRef: bookingId, flightId: existing.flightId,
+              oldSeat: existing.seat, newSeat,
+            }).catch(() => {});
+          }
+          return {
+            success: true,
+            booking: updated,
+            refundUsd: fromMinorUnits(refundMinor, "USD"),
+            message: `Seat changed to ${newSeat}. A refund of $${fromMinorUnits(refundMinor, "USD")} will appear on your card within 5–10 days.`,
+          };
+        } else {
+          // Same price — just swap
+          const updated = await updateBookingSeat(bookingId, userId, newSeat);
+          if (!updated) return { error: `Failed to update booking ${bookingId}` };
+          if (userEmail) {
+            sendSeatChangeConfirmation({
+              to: userEmail, passengerName: existing.passengerName,
+              bookingRef: bookingId, flightId: existing.flightId,
+              oldSeat: existing.seat, newSeat,
+            }).catch(() => {});
+          }
+          return { success: true, booking: updated };
         }
-        return updated;
       },
     }),
 
@@ -278,20 +355,76 @@ export function createTravelTools({
         if (!booking) return { error: `Booking ${bookingRef} not found` };
         if (booking.status === "cancelled") return { error: "This booking is already cancelled" };
 
-        const updated = await updateBookingSeatByRef(bookingRef, newSeat);
+        const oldSurcharge = booking.seatPriceMinor ?? 0;
+        const newSurcharge = await resolveSeatSurcharge(newSeat, booking.offerId);
+        const baseUrl = process.env.NEXTAUTH_URL ?? "";
 
-        if (booking.email) {
-          sendSeatChangeConfirmation({
-            to: booking.email,
-            passengerName: booking.passengerName,
-            bookingRef,
-            flightId: booking.flightId,
-            oldSeat: booking.seat,
-            newSeat,
-          }).catch(() => {});
+        if (newSurcharge > oldSurcharge) {
+          // Upgrade — pay the difference
+          const diffMinor = newSurcharge - oldSurcharge;
+          try {
+            const session = await paymentProvider.createSeatUpgradeSession({
+              diffMinor,
+              currency: "USD",
+              bookingRef,
+              newSeat,
+              newSeatPriceMinor: newSurcharge,
+              customerEmail: booking.email ?? undefined,
+              successUrl: `${baseUrl}/chat/guest`,
+              cancelUrl:  `${baseUrl}/chat/guest`,
+            });
+            return {
+              upgradeRequired: true,
+              checkoutUrl: session.url,
+              diffUsd: fromMinorUnits(diffMinor, "USD"),
+              newSeat,
+              message: `Seat ${newSeat} costs $${fromMinorUnits(diffMinor, "USD")} more than your current seat. Click the button to pay the upgrade fee.`,
+            };
+          } catch (err) {
+            logger.error("seat_upgrade_checkout_error", { bookingRef, error: logger.err(err) });
+            return { error: "Payment service unavailable. Please try again." };
+          }
+        } else if (newSurcharge < oldSurcharge) {
+          // Downgrade — refund the difference
+          const refundMinor = oldSurcharge - newSurcharge;
+          if (booking.stripeSessionId && booking.paymentStatus === "paid") {
+            try {
+              await paymentProvider.refundPartial({
+                stripeSessionId: booking.stripeSessionId,
+                bookingRef,
+                amountMinor: refundMinor,
+              });
+            } catch (err) {
+              logger.error("seat_downgrade_refund_error", { bookingRef, error: logger.err(err) });
+              return { error: "Could not process your refund. Please contact support." };
+            }
+          }
+          const updated = await updateBookingSeatAndPriceByRef(bookingRef, newSeat, newSurcharge);
+          if (booking.email) {
+            sendSeatChangeConfirmation({
+              to: booking.email, passengerName: booking.passengerName,
+              bookingRef, flightId: booking.flightId,
+              oldSeat: booking.seat, newSeat,
+            }).catch(() => {});
+          }
+          return {
+            success: true,
+            booking: updated,
+            refundUsd: fromMinorUnits(refundMinor, "USD"),
+            message: `Seat changed to ${newSeat}. A refund of $${fromMinorUnits(refundMinor, "USD")} will appear on your card within 5–10 days. A confirmation has been sent to your email.`,
+          };
+        } else {
+          // Same price — just swap
+          const updated = await updateBookingSeatByRef(bookingRef, newSeat);
+          if (booking.email) {
+            sendSeatChangeConfirmation({
+              to: booking.email, passengerName: booking.passengerName,
+              bookingRef, flightId: booking.flightId,
+              oldSeat: booking.seat, newSeat,
+            }).catch(() => {});
+          }
+          return { success: true, booking: updated, message: `Seat changed to ${newSeat}. A confirmation has been sent to your email.` };
         }
-
-        return { success: true, booking: updated, message: `Seat changed to ${newSeat}. A confirmation has been sent to your email.` };
       },
     }),
 
@@ -321,6 +454,14 @@ export function createTravelTools({
         }
 
         const { priceMinor, currency, priceChanged, previousPriceMinor } = validation;
+
+        // Read seat surcharge from the validated offer — no extra DB call needed.
+        const seatPrices = (validation.offer.seatPrices ?? {}) as Record<string, number>;
+        const seatSurchargeMinor =
+          seatPrices[seatNumber] !== undefined ? seatPrices[seatNumber]
+          : validation.offer.provider === "mock" ? mockSeatSurchargeMinor(seatNumber)
+          : 0;
+        const totalMinor = priceMinor + seatSurchargeMinor;
 
         if (priceChanged) {
           if (priceChangeToken) {
@@ -379,7 +520,7 @@ export function createTravelTools({
         }
 
         const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
-        const priceUsdDisplay = fromMinorUnits(priceMinor, currency);
+        const priceUsdDisplay = fromMinorUnits(totalMinor, currency);
         const baseUrl = process.env.NEXTAUTH_URL ?? "";
 
         // DB row created FIRST so a Stripe session always has a matching booking.
@@ -392,6 +533,7 @@ export function createTravelTools({
           passengerName,
           seat: seatNumber,
           email: effectiveEmail,
+          seatPriceMinor: seatSurchargeMinor > 0 ? seatSurchargeMinor : undefined,
           expiresAt,
         });
 
@@ -399,7 +541,7 @@ export function createTravelTools({
         let checkoutUrl: string;
         try {
           const result = await paymentProvider.createCheckoutSession({
-            priceMinor,
+            priceMinor: totalMinor,
             currency,
             flightId,
             seatNumber,

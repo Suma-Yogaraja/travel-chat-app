@@ -162,6 +162,33 @@ function MessageBubble({ message, onSendMessage }: MessageBubbleProps) {
             }
           }
 
+          if (
+            (toolName === "change_seat" || toolName === "verify_and_change_seat") &&
+            (tool.state === "output-available" || tool.state === "result")
+          ) {
+            const output = tool.output as { upgradeRequired?: boolean; checkoutUrl?: string; diffUsd?: number; newSeat?: string };
+            if (output?.upgradeRequired && output.checkoutUrl) {
+              return (
+                <div key={i} className="rounded-xl p-4 space-y-3" style={{ background: "#1a1200", border: "1px solid #7c5a00" }}>
+                  <div>
+                    <p className="text-yellow-400 text-sm font-medium">Seat upgrade fee</p>
+                    <p className="text-[#aaa] text-xs mt-0.5">
+                      Seat {output.newSeat} requires an additional ${output.diffUsd}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { window.location.href = output.checkoutUrl!; }}
+                    className="w-full py-3 rounded-xl text-white font-semibold text-sm"
+                    style={{ background: "#d97706" }}
+                  >
+                    Pay ${output.diffUsd} upgrade fee
+                  </button>
+                  <p className="text-[#444] text-xs text-center">Secure checkout · Stripe · Test card: 4242 4242 4242 4242</p>
+                </div>
+              );
+            }
+          }
+
           if (toolName === "create_checkout" && (tool.state === "output-available" || tool.state === "result")) {
             const output = tool.output as {
               checkoutUrl?: string;

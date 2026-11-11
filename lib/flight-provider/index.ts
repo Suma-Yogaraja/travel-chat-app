@@ -19,6 +19,8 @@ export interface Seat {
   column: string;
   type: "window" | "middle" | "aisle";
   available: boolean;
+  price?: number;    // seat surcharge in display units (e.g. 20 for $20); undefined = included in fare
+  currency?: string;
 }
 
 export interface Booking {

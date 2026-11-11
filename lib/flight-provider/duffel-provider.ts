@@ -33,10 +33,17 @@ interface DuffelOffer {
   total_currency: string;
 }
 
+interface DuffelAvailableService {
+  id: string;
+  total_amount: string;
+  total_currency: string;
+  passenger_id: string;
+}
+
 interface DuffelSeatElement {
   type: string;
   designator?: string;
-  available_services?: unknown[];
+  available_services?: DuffelAvailableService[];
 }
 
 interface DuffelSeatMap {
@@ -201,15 +208,20 @@ function parseSeatMap(seatMap: DuffelSeatMap): Seat[] {
           const rowMatch = designator.match(/^\d+/);
           if (!colMatch || !rowMatch) continue;
 
-          // In Duffel, available_services empty = seat included in fare (still selectable).
-          // A seat element existing in the map means it's physically available.
+          // available_services empty = seat included in fare (no surcharge).
+          // available_services[0].total_amount = surcharge to select this seat.
           // Taken seats are simply absent from the response.
+          const service = element.available_services?.[0];
+          const price = service?.total_amount ? parseFloat(service.total_amount) : undefined;
+          const currency = service?.total_currency ?? "USD";
+
           seats.push({
             seatNumber: designator,
             row: parseInt(rowMatch[0]),
             column: colMatch[0],
             type: getSeatType(colMatch[0]),
             available: true,
+            ...(price !== undefined && price > 0 ? { price, currency } : {}),
           });
         }
       }

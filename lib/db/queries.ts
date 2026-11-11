@@ -294,6 +294,7 @@ export async function createPendingBooking(params: {
   email?: string;
   offerId?: string;
   stripeSessionId?: string;
+  seatPriceMinor?: number;
   expiresAt: Date;
 }) {
   const id = randomUUID();
@@ -310,6 +311,34 @@ export async function setBookingStripeSession(bookingRef: string, stripeSessionI
     .update(bookings)
     .set({ stripeSessionId })
     .where(and(eq(bookings.bookingRef, bookingRef), isNull(bookings.stripeSessionId)));
+}
+
+export async function updateBookingSeatAndPrice(bookingRef: string, userId: string, newSeat: string, seatPriceMinor: number) {
+  const [row] = await db
+    .update(bookings)
+    .set({ seat: newSeat, seatPriceMinor })
+    .where(and(eq(bookings.bookingRef, bookingRef), eq(bookings.userId, userId)))
+    .returning();
+  return row ?? null;
+}
+
+export async function updateBookingSeatAndPriceByRef(bookingRef: string, newSeat: string, seatPriceMinor: number) {
+  const [row] = await db
+    .update(bookings)
+    .set({ seat: newSeat, seatPriceMinor })
+    .where(eq(bookings.bookingRef, bookingRef))
+    .returning();
+  return row ?? null;
+}
+
+// Called by webhook when a seat upgrade payment completes.
+export async function confirmSeatUpgrade(bookingRef: string, newSeat: string, newSeatPriceMinor: number): Promise<boolean> {
+  const [row] = await db
+    .update(bookings)
+    .set({ seat: newSeat, seatPriceMinor: newSeatPriceMinor })
+    .where(eq(bookings.bookingRef, bookingRef))
+    .returning({ id: bookings.id });
+  return !!row;
 }
 
 // Cleans up an orphaned pending booking if Stripe session creation fails.

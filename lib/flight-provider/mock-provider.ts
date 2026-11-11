@@ -1,4 +1,5 @@
 import type { Flight, Seat, Booking, FlightProvider } from "./index";
+import { mockSeatSurchargeMinor } from "@/lib/seat-pricing";
 
 const FLIGHTS: Flight[] = [
   { id: "F1",  origin: "JFK", destination: "LAX", date: "2026-11-05", departureTime: "06:00", arrivalTime: "09:30", durationMinutes: 330, price: 199, currency: "USD", aircraft: "Boeing 737",  availableSeats: 12 },
@@ -36,7 +37,12 @@ function buildSeatMap(flightId: string): Seat[] {
       const type = (col === "A" || col === "F") ? "window"
                  : (col === "C" || col === "D") ? "aisle"
                  : "middle";
-      seats.push({ seatNumber, row, column: col, type, available: !taken.has(seatNumber) });
+      const surchargeMinor = mockSeatSurchargeMinor(seatNumber);
+      seats.push({
+        seatNumber, row, column: col, type,
+        available: !taken.has(seatNumber),
+        ...(surchargeMinor > 0 ? { price: surchargeMinor / 100, currency: "USD" } : {}),
+      });
     }
   }
   return seats;

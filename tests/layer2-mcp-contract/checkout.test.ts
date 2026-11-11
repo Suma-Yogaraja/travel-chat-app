@@ -58,9 +58,11 @@ function makeProvider(url = "https://checkout.stripe.com/pay/sess_abc123"): Paym
   createCheckoutSession: ReturnType<typeof vi.fn>;
 } {
   return {
-    createCheckoutSession: vi.fn().mockResolvedValue({ id: "sess_abc123", url }),
-    refundPayment:  vi.fn().mockResolvedValue(undefined),
-    expireSession:  vi.fn().mockResolvedValue(undefined),
+    createCheckoutSession:    vi.fn().mockResolvedValue({ id: "sess_abc123", url }),
+    createSeatUpgradeSession: vi.fn().mockResolvedValue({ id: "sess_upg", url: "https://checkout.stripe.com/pay/upg" }),
+    refundPayment:            vi.fn().mockResolvedValue(undefined),
+    refundPartial:            vi.fn().mockResolvedValue(undefined),
+    expireSession:            vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -71,6 +73,7 @@ function validOffer(overrides: Record<string, unknown> = {}) {
     currency: "USD",
     priceChanged: false,
     previousPriceMinor: 19999,
+    offer: { provider: "mock", seatPrices: null },
     ...overrides,
   };
 }
@@ -118,8 +121,9 @@ describe("happy path — authenticated user", () => {
 
     await getCheckout({ userId: "user-alice", paymentProvider: provider })(baseInput());
 
+    // flight 19999 + window seat 12A surcharge 3000 = 22999 (both server-derived)
     expect(provider.createCheckoutSession).toHaveBeenCalledWith(
-      expect.objectContaining({ priceMinor: 19999, currency: "USD" })
+      expect.objectContaining({ priceMinor: 22999, currency: "USD" })
     );
   });
 
@@ -255,9 +259,9 @@ describe("price-change flow", () => {
 
     expect(result.checkoutUrl).toBeDefined();
     expect(result.error).toBeUndefined();
-    // Confirmed price must match the server-validated price, not the old price
+    // Confirmed price must match the server-validated price (21999) + seat surcharge (3000), not the old price
     expect(provider.createCheckoutSession).toHaveBeenCalledWith(
-      expect.objectContaining({ priceMinor: 21999 })
+      expect.objectContaining({ priceMinor: 24999 })
     );
   });
 
